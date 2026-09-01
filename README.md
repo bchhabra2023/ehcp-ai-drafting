@@ -220,7 +220,7 @@ Progress for every stage is streamed to the UI through `POST /api/analyze-stream
 | `AZURE_OPENAI_DEPLOYMENT` | – | Chat deployment name, e.g. `gpt-4o` |
 | `AZURE_OPENAI_API_VERSION` | – | e.g. `2025-04-01-preview` |
 | `MODEL_TEMPERATURE` | `0` | Deterministic extraction is recommended |
-| `MODEL_MAX_TOKENS` | `30` | Token cap used by short auxiliary completions |
+| `MODEL_MAX_TOKENS` | `30` | Token cap for the short auxiliary completion used to infer the child's name; extraction and validation calls are not capped by this value |
 | `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT` | – | Document Intelligence endpoint |
 | `AZURE_DOCUMENT_INTELLIGENCE_KEY` | – | Only when `USE_MANAGED_IDENTITY=false` |
 | `AZURE_STORAGE_CONNECTION_STRING` | – | Blob access with keys (optional feature) |
@@ -409,7 +409,7 @@ It prints both URLs on completion.
 ## API reference
 
 All routes are prefixed with `/api`. Requests should include an `X-Session-ID` header (and an
-an `Authorization` header carrying the Entra ID access credential when `AUTH_ENABLED=true`).
+`Authorization` header carrying the Entra ID access credential when `AUTH_ENABLED=true`).
 
 | Method | Path | Purpose |
 |---|---|---|
