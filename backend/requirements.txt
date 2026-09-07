@@ -1,7 +1,8 @@
 fastapi
 uvicorn[standard]
 python-multipart
-agent-framework[openai]
+agent-framework-core
+agent-framework-openai
 python-dotenv
 python-docx
 openai

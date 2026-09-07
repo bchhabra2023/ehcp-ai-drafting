@@ -8,19 +8,22 @@ from functools import lru_cache
 from dotenv import load_dotenv
 
 from azure.ai.documentintelligence import DocumentIntelligenceClient
-from azure.core.credentials import AzureKeyCredential
 
 from docx import Document
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 import fitz  # PyMuPDF for PDF text extraction
 
 from openai import AsyncAzureOpenAI
-from azure.identity import get_bearer_token_provider
 
+from app.logging_utils import emit_log, describe_exception
 from app.services.blob_storage import upload_json_to_blob, is_blob_storage_enabled
 from app.settings import (
-    USE_MANAGED_IDENTITY,
+    FOUNDRY_ENDPOINT,
+    FOUNDRY_MODEL_NAME,
+    FOUNDRY_API_VERSION,
+    AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
     get_azure_credential,
+    get_openai_token_provider,
 )
 
 
@@ -29,14 +32,6 @@ from app.settings import (
 # =========================================================
 
 load_dotenv()
-
-endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-api_key = os.getenv("AZURE_OPENAI_API_KEY")
-deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
-api_version = os.getenv("AZURE_OPENAI_API_VERSION")
-
-di_endpoint = os.getenv("AZURE_DI_ENDPOINT") or os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
-di_key = os.getenv("AZURE_DI_KEY") or os.getenv("AZURE_DOCUMENT_INTELLIGENCE_KEY")
 
 DI_TIMEOUT_SECONDS = int(os.getenv("DI_TIMEOUT_SECONDS", "180"))
 LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "240"))
@@ -83,33 +78,18 @@ def _accumulate_tokens(usage: dict):
 
 @lru_cache(maxsize=1)
 def get_document_intelligence_client() -> DocumentIntelligenceClient:
-    if USE_MANAGED_IDENTITY:
-        return DocumentIntelligenceClient(
-            endpoint=di_endpoint,
-            credential=get_azure_credential(),
-        )
     return DocumentIntelligenceClient(
-        endpoint=di_endpoint,
-        credential=AzureKeyCredential(di_key),
+        endpoint=AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
+        credential=get_azure_credential(),
     )
 
 
 def create_openai_client() -> AsyncAzureOpenAI:
-    """Create an AsyncAzureOpenAI client for LLM calls."""
-    if USE_MANAGED_IDENTITY:
-        credential = get_azure_credential()
-        token_provider = get_bearer_token_provider(
-            credential, "https://cognitiveservices.azure.com/.default"
-        )
-        return AsyncAzureOpenAI(
-            azure_endpoint=endpoint,
-            azure_ad_token_provider=token_provider,
-            api_version=api_version,
-        )
+    """Create an AsyncAzureOpenAI client for Foundry-backed LLM calls."""
     return AsyncAzureOpenAI(
-        azure_endpoint=endpoint,
-        api_key=api_key,
-        api_version=api_version,
+        azure_endpoint=FOUNDRY_ENDPOINT,
+        azure_ad_token_provider=get_openai_token_provider(),
+        api_version=FOUNDRY_API_VERSION,
     )
 
 
@@ -154,7 +134,7 @@ _PROVISION_FIELDS = {"Provision", "By_Whom", "Frequency", "Met_Need"}
 
 # Patterns to strip at the start of lines inside provision field values
 _BULLET_PREFIX_RE = re.compile(
-    r"^[\s]*(?:[•·–—\-]\s*|\d+[\.\)]\s*|\d+\.\d+[\.\)]*\s*)",
+    r"^[\s]*(?:[â€¢Â·â€“â€”\-]\s*|\d+[\.\)]\s*|\d+\.\d+[\.\)]*\s*)",
     re.MULTILINE,
 )
 
@@ -223,7 +203,7 @@ def _merge_paragraph_arrays(data: dict) -> dict:
             # If any element looks like a numbered bullet, leave it alone
             if any(_NUMBERED_PREFIX_RE.match(str(item)) for item in val if isinstance(item, str)):
                 continue
-            # All elements are plain paragraph text — join into one element
+            # All elements are plain paragraph text â€” join into one element
             merged = " ".join(str(item).strip() for item in val if isinstance(item, str) and item.strip())
             if merged:
                 section[field_key] = [merged]
@@ -298,7 +278,7 @@ def _enforce_provision_array_lengths(data: dict) -> dict:
             continue  # already aligned
 
         # Use the most common length (mode) among the non-Provision arrays as
-        # the target — By_Whom, Frequency, Met_Need are less likely to have
+        # the target â€” By_Whom, Frequency, Met_Need are less likely to have
         # extra entries since their values are short/structured.
         non_provision_lens = [lengths[f] for f in ("By_Whom", "Frequency", "Met_Need") if f in lengths]
         if non_provision_lens:
@@ -312,10 +292,10 @@ def _enforce_provision_array_lengths(data: dict) -> dict:
             if not isinstance(val, list):
                 continue
             if len(val) > target_len:
-                print(f"  [PostProcess] {section_key}.{field}: truncating {len(val)} → {target_len} entries")
+                print(f"  [PostProcess] {section_key}.{field}: truncating {len(val)} â†’ {target_len} entries")
                 section[field] = val[:target_len]
             elif len(val) < target_len:
-                print(f"  [PostProcess] {section_key}.{field}: padding {len(val)} → {target_len} entries")
+                print(f"  [PostProcess] {section_key}.{field}: padding {len(val)} â†’ {target_len} entries")
                 section[field] = val + [None] * (target_len - len(val))
 
     return data
@@ -328,6 +308,16 @@ def _enforce_provision_array_lengths(data: dict) -> dict:
 def analyze_with_doc_intelligence(file_path: str) -> str:
     """Analyze a local file using Azure Document Intelligence layout model."""
     client = get_document_intelligence_client()
+    file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+    emit_log(
+        "document_intelligence",
+        "analyze_start",
+        file_path=file_path,
+        endpoint=AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
+        file_size=file_size,
+        extension=os.path.splitext(file_path)[1].lower(),
+        timeout_seconds=DI_TIMEOUT_SECONDS,
+    )
 
     with open(file_path, "rb") as f:
         poller = client.begin_analyze_document(
@@ -338,6 +328,14 @@ def analyze_with_doc_intelligence(file_path: str) -> str:
 
     result = poller.result()
     document_text = result.content
+    emit_log(
+        "document_intelligence",
+        "analyze_complete",
+        file_path=file_path,
+        content_chars=len(document_text or ""),
+        page_count=len(getattr(result, "pages", []) or []),
+        table_count=len(getattr(result, "tables", []) or []),
+    )
 
     # Supplement with table cells that DI parsed but didn't include in content
     if hasattr(result, 'tables') and result.tables:
@@ -858,6 +856,13 @@ def build_document_text(file_path: str) -> str:
     except Exception as exc:
         if ext not in (".docx", ".pdf"):
             raise
+        emit_log(
+            "document_intelligence",
+            "analyze_failed_fallback_local",
+            file_path=file_path,
+            endpoint=AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
+            **describe_exception(exc),
+        )
         print(f"  [DI] Failed ({type(exc).__name__}), falling back to local extraction")
         doc_text = extract_text_locally(file_path)
         print(f"  [Local] Extracted {len(doc_text)} chars")
@@ -888,10 +893,18 @@ def build_document_text(file_path: str) -> str:
 async def run_llm_extraction(full_prompt: str) -> tuple[str, dict]:
     """Send a single extraction prompt to the LLM and return the response."""
     client = create_openai_client()
+    emit_log(
+        "foundry",
+        "llm_request_start",
+        model=FOUNDRY_MODEL_NAME,
+        endpoint=FOUNDRY_ENDPOINT,
+        prompt_chars=len(full_prompt),
+        timeout_seconds=LLM_TIMEOUT_SECONDS,
+    )
 
     response = await asyncio.wait_for(
         client.chat.completions.create(
-            model=deployment,
+            model=FOUNDRY_MODEL_NAME,
             messages=[
                 {
                     "role": "system",
@@ -905,7 +918,7 @@ async def run_llm_extraction(full_prompt: str) -> tuple[str, dict]:
                         "Do NOT truncate, summarise, or skip any lines, paragraphs, or bullet points. "
                         "Every line of text that belongs to a schema field MUST appear in the output. "
                         "If a section has an introductory sentence followed by multiple lines or paragraphs, "
-                        "include ALL of them — not just the first line."
+                        "include ALL of them â€” not just the first line."
                     ),
                 },
                 {"role": "user", "content": full_prompt},
@@ -926,12 +939,20 @@ async def run_llm_extraction(full_prompt: str) -> tuple[str, dict]:
             "total_tokens": response.usage.total_tokens or 0,
         }
     _accumulate_tokens(token_usage)
-    return response.choices[0].message.content, token_usage
+    response_text = response.choices[0].message.content
+    emit_log(
+        "foundry",
+        "llm_request_complete",
+        model=FOUNDRY_MODEL_NAME,
+        response_chars=len(response_text or ""),
+        token_usage=token_usage,
+    )
+    return response_text, token_usage
 
 
 def split_schema(schema_str: str) -> list:
     """Split schema into chunks for extraction. Each chunk gets its own LLM call.
-    
+
     For schemas with many keys (>3), each key gets its own chunk to ensure
     the LLM focuses on extracting ALL data for that section without losing content.
     Small trailing chunks are merged into the previous one.
@@ -1001,7 +1022,7 @@ async def extract_document(document_text: str, prompt_file: str, schema_file: st
                 f"\n\nIMPORTANT: Extract ONLY these sections: {section_names}. "
                 "Ignore all other sections.\n"
                 "COMPLETENESS RULES:\n"
-                "- Include ALL text from EVERY field — do NOT truncate or shorten any content.\n"
+                "- Include ALL text from EVERY field â€” do NOT truncate or shorten any content.\n"
                 "- If a section has an introductory line followed by multiple lines, paragraphs or items, "
                 "extract ALL of them as separate array elements.\n"
                 "- Do NOT return only the first line of a multi-line section.\n"
@@ -1010,7 +1031,7 @@ async def extract_document(document_text: str, prompt_file: str, schema_file: st
                 "- Count the items you extract and verify nothing was skipped.\n"
                 "- For H1/H2 provision tables: use the STRUCTURED TABLE DATA at the end to count exact rows. "
                 "All four arrays (Provision, By_Whom, Frequency, Met_Need) MUST have the SAME length. "
-                "If a Met_Need cell has multiple lines, join them with \\n into ONE string — do NOT "
+                "If a Met_Need cell has multiple lines, join them with \\n into ONE string â€” do NOT "
                 "split them into separate Provision entries."
             )
             print(f"  Pass {i+1}/{len(schema_chunks)} ({section_names})...")
@@ -1027,7 +1048,7 @@ async def extract_document(document_text: str, prompt_file: str, schema_file: st
         )
         full_prompt += (
             "\n\nCOMPLETENESS RULES:\n"
-            "- Include ALL text from EVERY field — do NOT truncate or shorten any content.\n"
+            "- Include ALL text from EVERY field â€” do NOT truncate or shorten any content.\n"
             "- If a section has an introductory line followed by multiple lines, paragraphs or items, "
             "extract ALL of them as separate array elements.\n"
             "- Do NOT return only the first line of a multi-line section.\n"

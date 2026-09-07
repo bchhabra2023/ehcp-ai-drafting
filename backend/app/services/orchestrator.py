@@ -20,6 +20,7 @@ import asyncio
 import time
 from typing import Callable, Dict, List, Optional
 
+from app.logging_utils import emit_log, describe_exception
 from app.services.agents import (
     read_document,
     extract_to_json,
@@ -75,59 +76,86 @@ class EHCPAgentOrchestrator:
         _notify({"file_path": file_path, "stage": "agent_pipeline", "event": "start",
                  "agent": "Pipeline"})
         pipeline_start = time.perf_counter()
+        current_stage = "agent_pipeline"
+        current_agent = "Pipeline"
 
-        # Step 1: Read document (sync tool)
-        _notify({"file_path": file_path, "stage": "agent_reader", "event": "start",
-                 "agent": "DocumentReaderAgent"})
-        read_document(file_path=file_path, output_text_path=doctext_path)
-        elapsed = time.perf_counter() - pipeline_start
-        print(f"  [DocumentReaderAgent] done ({elapsed:.1f}s)")
-        _notify({"file_path": file_path, "stage": "agent_reader", "event": "done",
-                 "agent": "DocumentReaderAgent", "elapsed_seconds": elapsed})
+        try:
+            # Step 1: Read document (sync tool)
+            current_stage = "agent_reader"
+            current_agent = "DocumentReaderAgent"
+            _notify({"file_path": file_path, "stage": current_stage, "event": "start",
+                     "agent": current_agent})
+            read_document(file_path=file_path, output_text_path=doctext_path)
+            elapsed = time.perf_counter() - pipeline_start
+            print(f"  [DocumentReaderAgent] done ({elapsed:.1f}s)")
+            _notify({"file_path": file_path, "stage": current_stage, "event": "done",
+                     "agent": current_agent, "elapsed_seconds": elapsed})
 
-        # Step 2: Extract JSON (async tool)
-        _notify({"file_path": file_path, "stage": "agent_extractor", "event": "start",
-                 "agent": "ExtractorAgent"})
-        await extract_to_json(
-            doctext_path=doctext_path,
-            prompt_file=prompt_file,
-            schema_file=schema_file,
-            output_json_path=output_file,
-        )
-        elapsed = time.perf_counter() - pipeline_start
-        print(f"  [ExtractorAgent] done ({elapsed:.1f}s)")
-        _notify({"file_path": file_path, "stage": "agent_extractor", "event": "done",
-                 "agent": "ExtractorAgent", "elapsed_seconds": elapsed})
+            # Step 2: Extract JSON (async tool)
+            current_stage = "agent_extractor"
+            current_agent = "ExtractorAgent"
+            _notify({"file_path": file_path, "stage": current_stage, "event": "start",
+                     "agent": current_agent})
+            await extract_to_json(
+                doctext_path=doctext_path,
+                prompt_file=prompt_file,
+                schema_file=schema_file,
+                output_json_path=output_file,
+            )
+            elapsed = time.perf_counter() - pipeline_start
+            print(f"  [ExtractorAgent] done ({elapsed:.1f}s)")
+            _notify({"file_path": file_path, "stage": current_stage, "event": "done",
+                     "agent": current_agent, "elapsed_seconds": elapsed})
 
-        # Step 3: Validate extraction (async tool)
-        _notify({"file_path": file_path, "stage": "agent_validator", "event": "start",
-                 "agent": "ValidatorAgent"})
-        await validate_extraction(
-            doctext_path=doctext_path,
-            extracted_json_path=output_file,
-            validation_output_path=validation_output_file,
-        )
-        elapsed = time.perf_counter() - pipeline_start
-        print(f"  [ValidatorAgent] done ({elapsed:.1f}s)")
-        _notify({"file_path": file_path, "stage": "agent_validator", "event": "done",
-                 "agent": "ValidatorAgent", "elapsed_seconds": elapsed})
+            # Step 3: Validate extraction (async tool)
+            current_stage = "agent_validator"
+            current_agent = "ValidatorAgent"
+            _notify({"file_path": file_path, "stage": current_stage, "event": "start",
+                     "agent": current_agent})
+            await validate_extraction(
+                doctext_path=doctext_path,
+                extracted_json_path=output_file,
+                validation_output_path=validation_output_file,
+            )
+            elapsed = time.perf_counter() - pipeline_start
+            print(f"  [ValidatorAgent] done ({elapsed:.1f}s)")
+            _notify({"file_path": file_path, "stage": current_stage, "event": "done",
+                     "agent": current_agent, "elapsed_seconds": elapsed})
 
-        # Step 4: Quality check (sync tool)
-        _notify({"file_path": file_path, "stage": "agent_quality", "event": "start",
-                 "agent": "QualityCheckerAgent"})
-        recheck_validation(
-            validation_json_path=validation_output_file,
-            extracted_json_path=output_file,
-            doctext_path=doctext_path,
-        )
-        elapsed = time.perf_counter() - pipeline_start
-        print(f"  [QualityCheckerAgent] done ({elapsed:.1f}s)")
-        _notify({"file_path": file_path, "stage": "agent_quality", "event": "done",
-                 "agent": "QualityCheckerAgent", "elapsed_seconds": elapsed})
+            # Step 4: Quality check (sync tool)
+            current_stage = "agent_quality"
+            current_agent = "QualityCheckerAgent"
+            _notify({"file_path": file_path, "stage": current_stage, "event": "start",
+                     "agent": current_agent})
+            recheck_validation(
+                validation_json_path=validation_output_file,
+                extracted_json_path=output_file,
+                doctext_path=doctext_path,
+            )
+            elapsed = time.perf_counter() - pipeline_start
+            print(f"  [QualityCheckerAgent] done ({elapsed:.1f}s)")
+            _notify({"file_path": file_path, "stage": current_stage, "event": "done",
+                     "agent": current_agent, "elapsed_seconds": elapsed})
 
-        pipeline_elapsed = time.perf_counter() - pipeline_start
-        _notify({"file_path": file_path, "stage": "agent_pipeline", "event": "done",
-                 "agent": "Pipeline", "elapsed_seconds": pipeline_elapsed})
+            pipeline_elapsed = time.perf_counter() - pipeline_start
+            _notify({"file_path": file_path, "stage": "agent_pipeline", "event": "done",
+                     "agent": "Pipeline", "elapsed_seconds": pipeline_elapsed})
+        except Exception as exc:
+            elapsed = time.perf_counter() - pipeline_start
+            emit_log(
+                "orchestrator",
+                "agent_step_failed",
+                file_path=file_path,
+                stage=current_stage,
+                agent=current_agent,
+                elapsed_seconds=round(elapsed, 2),
+                **describe_exception(exc),
+            )
+            _notify({"file_path": file_path, "stage": current_stage, "event": "error",
+                     "agent": current_agent, "elapsed_seconds": elapsed, "error": str(exc)})
+            _notify({"file_path": file_path, "stage": "agent_pipeline", "event": "error",
+                     "agent": "Pipeline", "elapsed_seconds": elapsed, "error": str(exc)})
+            raise
 
         # Read results from disk (tools wrote them during execution)
         result = {
@@ -186,7 +214,20 @@ class EHCPAgentOrchestrator:
             return result
 
         tasks = [_process_one(cfg) for cfg in file_configs]
+        emit_log(
+            "orchestrator",
+            "batch_start",
+            file_count=len(file_configs),
+            files=[os.path.basename(cfg["input_docx"]) for cfg in file_configs],
+        )
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        emit_log(
+            "orchestrator",
+            "batch_complete",
+            file_count=len(file_configs),
+            success_count=sum(0 if isinstance(item, Exception) else 1 for item in results),
+            failure_count=sum(1 if isinstance(item, Exception) else 0 for item in results),
+        )
         return results, document_texts
 
 

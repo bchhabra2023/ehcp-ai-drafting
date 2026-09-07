@@ -1,19 +1,19 @@
 """
-EHCP Agent Framework — Agent Definitions
+EHCP Agent Framework â€” Agent Definitions
 
 Uses Microsoft Agent Framework (agent-framework) with OpenAIChatCompletionClient
-for Azure OpenAI. Each agent has @tool-decorated functions and is created via
+for Microsoft Foundry-hosted model deployments. Each agent has @tool-decorated functions and is created via
 the Agent class.
 
 Reader Pipeline agents:
-    1. DocumentReaderAgent  — DI text extraction  → writes doctext file
-    2. ExtractorAgent       — LLM JSON extraction → writes output JSON
-    3. ValidatorAgent       — LLM validation      → writes validation JSON
-    4. QualityCheckerAgent  — Rule-based recheck  → overwrites validation JSON
+    1. DocumentReaderAgent  â€” DI text extraction  â†’ writes doctext file
+    2. ExtractorAgent       â€” LLM JSON extraction â†’ writes output JSON
+    3. ValidatorAgent       â€” LLM validation      â†’ writes validation JSON
+    4. QualityCheckerAgent  â€” Rule-based recheck  â†’ overwrites validation JSON
 
 Writer Pipeline agents:
-    5. TemplateWriterAgent      — DOCX template fill → writes filled DOCX
-    6. WriterValidatorAgent     — Deterministic validation → writes report JSON
+    5. TemplateWriterAgent      â€” DOCX template fill â†’ writes filled DOCX
+    6. WriterValidatorAgent     â€” Deterministic validation â†’ writes report JSON
 """
 
 import os
@@ -21,8 +21,8 @@ from dotenv import load_dotenv
 
 from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIChatCompletionClient
-from azure.identity.aio import DefaultAzureCredential
 
+from app.logging_utils import emit_log
 from app.services.helpers import (
     build_document_text,
     extract_document,
@@ -59,32 +59,31 @@ import json
 load_dotenv()
 
 from app.settings import (
-    USE_MANAGED_IDENTITY,
-    AZURE_OPENAI_ENDPOINT,
-    AZURE_OPENAI_API_KEY,
-    AZURE_OPENAI_DEPLOYMENT,
-    AZURE_OPENAI_API_VERSION,
+    FOUNDRY_ENDPOINT,
+    FOUNDRY_MODEL_NAME,
+    FOUNDRY_API_VERSION,
+    get_azure_credential,
 )
 
 
 # =========================================================
-# Azure OpenAI Chat Client (shared)
+# Foundry Chat Client (shared)
 # =========================================================
 
 def _create_client() -> OpenAIChatCompletionClient:
-    """Create an OpenAIChatCompletionClient for Azure OpenAI."""
-    if USE_MANAGED_IDENTITY:
-        return OpenAIChatCompletionClient(
-            model=AZURE_OPENAI_DEPLOYMENT,
-            azure_endpoint=AZURE_OPENAI_ENDPOINT,
-            credential=DefaultAzureCredential(),
-            api_version=AZURE_OPENAI_API_VERSION,
-        )
+    """Create an OpenAIChatCompletionClient for Microsoft Foundry."""
+    emit_log(
+        "agents",
+        "openai_chat_client_created",
+        model=FOUNDRY_MODEL_NAME,
+        endpoint=FOUNDRY_ENDPOINT,
+        api_version=FOUNDRY_API_VERSION,
+    )
     return OpenAIChatCompletionClient(
-        model=AZURE_OPENAI_DEPLOYMENT,
-        azure_endpoint=AZURE_OPENAI_ENDPOINT,
-        api_key=AZURE_OPENAI_API_KEY,
-        api_version=AZURE_OPENAI_API_VERSION,
+        model=FOUNDRY_MODEL_NAME,
+        azure_endpoint=FOUNDRY_ENDPOINT,
+        credential=get_azure_credential(),
+        api_version=FOUNDRY_API_VERSION,
     )
 
 
@@ -101,7 +100,14 @@ def read_document(file_path: str, output_text_path: str) -> str:
     os.makedirs(os.path.dirname(output_text_path) or ".", exist_ok=True)
     with open(output_text_path, "w", encoding="utf-8") as f:
         f.write(doc_text)
-    print(f"  [ReaderAgent] Extracted {len(doc_text)} chars → {output_text_path}")
+    emit_log(
+        "reader_agent",
+        "document_text_written",
+        file_path=file_path,
+        output_text_path=output_text_path,
+        document_chars=len(doc_text),
+    )
+    print(f"  [ReaderAgent] Extracted {len(doc_text)} chars â†’ {output_text_path}")
     return f"Document text extracted ({len(doc_text)} characters) and saved to {output_text_path}"
 
 
@@ -114,12 +120,20 @@ async def extract_to_json(
     print(f"  [ExtractorAgent] Extracting: prompt={prompt_file}, schema={schema_file}")
     with open(doctext_path, "r", encoding="utf-8") as f:
         doc_text = f.read()
+    emit_log(
+        "extractor_agent",
+        "extraction_start",
+        doctext_path=doctext_path,
+        prompt_file=prompt_file,
+        schema_file=schema_file,
+        document_chars=len(doc_text),
+    )
     data = await extract_document(doc_text, prompt_file, schema_file)
     os.makedirs(os.path.dirname(output_json_path) or ".", exist_ok=True)
     with open(output_json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
     n_keys = len(data) if isinstance(data, dict) else 0
-    print(f"  [ExtractorAgent] Extracted {n_keys} top-level keys → {output_json_path}")
+    print(f"  [ExtractorAgent] Extracted {n_keys} top-level keys â†’ {output_json_path}")
     return f"Extracted JSON ({n_keys} sections) saved to {output_json_path}"
 
 
@@ -135,6 +149,14 @@ async def validate_extraction(
         doc_text = f.read()
     with open(extracted_json_path, "r", encoding="utf-8") as f:
         extracted_json_str = f.read()
+    emit_log(
+        "validator_agent",
+        "validation_start",
+        doctext_path=doctext_path,
+        extracted_json_path=extracted_json_path,
+        document_chars=len(doc_text),
+        extracted_json_chars=len(extracted_json_str),
+    )
     prompt_template = load_text_file(VALIDATOR_PROMPT_FILE)
     full_prompt = prompt_template.replace(
         "{extracted_json}", extracted_json_str
@@ -145,7 +167,7 @@ async def validate_extraction(
     with open(validation_output_path, "w", encoding="utf-8") as f:
         json.dump(validation_data, f, indent=4, ensure_ascii=False)
     acc = validation_data.get("accuracy_percentage", "N/A")
-    print(f"  [ValidatorAgent] Accuracy: {acc}% → {validation_output_path}")
+    print(f"  [ValidatorAgent] Accuracy: {acc}% â†’ {validation_output_path}")
     return f"Validation complete ({acc}% accuracy), saved to {validation_output_path}"
 
 
@@ -174,6 +196,14 @@ def recheck_validation(
         validation_data = json.load(f)
     with open(doctext_path, "r", encoding="utf-8") as f:
         doc_text = f.read()
+    emit_log(
+        "quality_checker_agent",
+        "recheck_start",
+        validation_json_path=validation_json_path,
+        extracted_json_path=extracted_json_path,
+        doctext_path=doctext_path,
+        document_chars=len(doc_text),
+    )
     corrected = recheck_incorrect_fields(
         validation_data, extracted_json_path,
         rules=RECHECK_RULES, document_text=doc_text,
@@ -196,7 +226,7 @@ def recheck_validation(
         json.dump(corrected, f, indent=4, ensure_ascii=False)
     acc = corrected.get("accuracy_percentage", "N/A")
     comp = corrected.get("completeness_percentage", "N/A")
-    print(f"  [QualityCheckerAgent] Final accuracy: {acc}%, completeness: {comp}% → {validation_json_path}")
+    print(f"  [QualityCheckerAgent] Final accuracy: {acc}%, completeness: {comp}% â†’ {validation_json_path}")
     return f"PIPELINE_COMPLETE: Quality check done, final accuracy {acc}%, completeness {comp}%"
 
 
@@ -219,7 +249,7 @@ def fill_template(
         socialcare_json_path=socialcare_json_path,
         mapping_workbook=mapping_workbook,
     )
-    print(f"  [WriterAgent] Template filled → {result_path}")
+    print(f"  [WriterAgent] Template filled â†’ {result_path}")
     return f"Template filled and saved to {result_path}"
 
 
@@ -271,7 +301,7 @@ def validate_writer_output(
     with open(report_output_path, "w", encoding="utf-8") as f:
         json.dump(report_data, f, indent=2, ensure_ascii=False)
     total_checks = report_data.get("summary", {}).get("total_checks", 0)
-    print(f"  [WriterValidatorAgent] {total_checks} checks → {report_output_path}")
+    print(f"  [WriterValidatorAgent] {total_checks} checks â†’ {report_output_path}")
     return f"PIPELINE_COMPLETE: Writer validation done ({total_checks} checks), saved to {report_output_path}"
 
 
@@ -283,7 +313,7 @@ READER_INSTRUCTIONS = (
     "You are the DocumentReaderAgent in an EHCP document processing pipeline.\n"
     "When you receive a task message, look for the 'file_path' and 'doctext_path' values.\n"
     "Call your read_document tool with those exact paths to extract text from the document.\n"
-    "Always call the tool — never try to answer without using it."
+    "Always call the tool â€” never try to answer without using it."
 )
 
 EXTRACTOR_INSTRUCTIONS = (
@@ -291,7 +321,7 @@ EXTRACTOR_INSTRUCTIONS = (
     "When it is your turn, look for 'doctext_path', 'prompt_file', 'schema_file', "
     "and 'output_json_path' in the conversation.\n"
     "Call your extract_to_json tool with those exact paths.\n"
-    "Always call the tool — never try to answer without using it."
+    "Always call the tool â€” never try to answer without using it."
 )
 
 VALIDATOR_INSTRUCTIONS = (
@@ -299,7 +329,7 @@ VALIDATOR_INSTRUCTIONS = (
     "When it is your turn, look for 'doctext_path', 'output_json_path', "
     "and 'validation_json_path' in the conversation.\n"
     "Call your validate_extraction tool with those exact paths.\n"
-    "Always call the tool — never try to answer without using it."
+    "Always call the tool â€” never try to answer without using it."
 )
 
 QUALITY_CHECKER_INSTRUCTIONS = (
@@ -307,7 +337,7 @@ QUALITY_CHECKER_INSTRUCTIONS = (
     "When it is your turn, look for 'validation_json_path', 'output_json_path', "
     "and 'doctext_path' in the conversation.\n"
     "Call your recheck_validation tool with those exact paths.\n"
-    "Always call the tool — never try to answer without using it.\n"
+    "Always call the tool â€” never try to answer without using it.\n"
     "After the tool returns, respond with the word PIPELINE_COMPLETE followed by "
     "the final accuracy percentage."
 )
@@ -318,7 +348,7 @@ WRITER_INSTRUCTIONS = (
     "'personal_json', 'education_json', 'health_json', 'socialcare_json', "
     "and 'mapping_workbook' in the message.\n"
     "Call your fill_template tool with those exact paths.\n"
-    "Always call the tool — never try to answer without using it."
+    "Always call the tool â€” never try to answer without using it."
 )
 
 WRITER_VALIDATOR_INSTRUCTIONS = (
@@ -326,7 +356,7 @@ WRITER_VALIDATOR_INSTRUCTIONS = (
     "When it is your turn, look for the filled DOCX path, JSON paths, "
     "'mapping_workbook', and 'expected_output_docx' in the conversation.\n"
     "Call your validate_writer_output tool with those exact paths.\n"
-    "Always call the tool — never try to answer without using it.\n"
+    "Always call the tool â€” never try to answer without using it.\n"
     "After the tool returns, respond with the word PIPELINE_COMPLETE followed by "
     "the total number of checks."
 )

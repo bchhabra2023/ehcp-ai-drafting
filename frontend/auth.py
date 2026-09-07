@@ -6,9 +6,12 @@ User clicks sign-in -> redirected to Microsoft login -> comes back with auth cod
 """
 
 import os
+from functools import lru_cache
 import streamlit as st
 import msal
 from dotenv import load_dotenv
+from azure.identity import DefaultAzureCredential
+from azure.keyvault.secrets import SecretClient
 
 load_dotenv()
 
@@ -16,16 +19,49 @@ ENTRA_TENANT_ID = os.getenv("ENTRA_TENANT_ID", "").strip()
 ENTRA_CLIENT_ID = os.getenv("ENTRA_CLIENT_ID", "").strip()
 ENTRA_FRONTEND_CLIENT_ID = os.getenv("ENTRA_FRONTEND_CLIENT_ID", "").strip() or ENTRA_CLIENT_ID
 ENTRA_BACKEND_CLIENT_ID = os.getenv("ENTRA_BACKEND_CLIENT_ID", "").strip() or ENTRA_CLIENT_ID
-ENTRA_CLIENT_SECRET = os.getenv("ENTRA_CLIENT_SECRET", "").strip()
 ENTRA_SCOPE = os.getenv("ENTRA_SCOPE", "").strip()
 ENTRA_AUTHORITY = f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}"
 ENTRA_SCOPES = [
     ENTRA_SCOPE or f"api://{ENTRA_BACKEND_CLIENT_ID}/user_impersonation",
 ]
-# Redirect URI — the app's own URL (set via env or auto-detected)
+# Redirect URI â€” the app's own URL (set via env or auto-detected)
 ENTRA_REDIRECT_URI = os.getenv("ENTRA_REDIRECT_URI", "").strip()
+AZURE_KEY_VAULT_URL = os.getenv("AZURE_KEY_VAULT_URL", "").strip()
+ENTRA_CLIENT_SECRET_SECRET_NAME = os.getenv("ENTRA_CLIENT_SECRET_SECRET_NAME", "").strip()
+AZURE_CLIENT_ID = os.getenv("AZURE_CLIENT_ID", "").strip()
 
 AUTH_ENABLED = os.getenv("AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
+@lru_cache(maxsize=1)
+def _get_key_vault_secret_client() -> SecretClient:
+    if not AZURE_KEY_VAULT_URL:
+        raise RuntimeError("AZURE_KEY_VAULT_URL is required when authentication is enabled.")
+
+    credential_kwargs = {}
+    if AZURE_CLIENT_ID:
+        credential_kwargs["managed_identity_client_id"] = AZURE_CLIENT_ID
+
+    return SecretClient(
+        vault_url=AZURE_KEY_VAULT_URL,
+        credential=DefaultAzureCredential(**credential_kwargs),
+    )
+
+
+@lru_cache(maxsize=1)
+def _get_entra_client_secret() -> str:
+    if not ENTRA_CLIENT_SECRET_SECRET_NAME:
+        raise RuntimeError(
+            "ENTRA_CLIENT_SECRET_SECRET_NAME is required when authentication is enabled."
+        )
+
+    client = _get_key_vault_secret_client()
+    secret = client.get_secret(ENTRA_CLIENT_SECRET_SECRET_NAME)
+    if not secret.value:
+        raise RuntimeError(
+            f"Key Vault secret '{ENTRA_CLIENT_SECRET_SECRET_NAME}' is empty."
+        )
+    return secret.value
 
 
 def _get_redirect_uri() -> str:
@@ -39,7 +75,7 @@ def _get_msal_app() -> msal.ConfidentialClientApplication:
     """Create MSAL ConfidentialClientApplication."""
     return msal.ConfidentialClientApplication(
         client_id=ENTRA_FRONTEND_CLIENT_ID,
-        client_credential=ENTRA_CLIENT_SECRET,
+        client_credential=_get_entra_client_secret(),
         authority=ENTRA_AUTHORITY,
     )
 
@@ -50,8 +86,10 @@ def _validate_auth_config() -> bool:
         missing.append("ENTRA_TENANT_ID")
     if not ENTRA_FRONTEND_CLIENT_ID:
         missing.append("ENTRA_CLIENT_ID (or ENTRA_FRONTEND_CLIENT_ID)")
-    if not ENTRA_CLIENT_SECRET:
-        missing.append("ENTRA_CLIENT_SECRET")
+    if not AZURE_KEY_VAULT_URL:
+        missing.append("AZURE_KEY_VAULT_URL")
+    if not ENTRA_CLIENT_SECRET_SECRET_NAME:
+        missing.append("ENTRA_CLIENT_SECRET_SECRET_NAME")
     if missing:
         st.error("Authentication is enabled but missing env values: " + ", ".join(missing))
         return False
@@ -84,7 +122,12 @@ def login_ui():
 
     if auth_code:
         # Exchange the auth code for tokens
-        app = _get_msal_app()
+        try:
+            app = _get_msal_app()
+        except Exception as exc:
+            st.error(f"Failed to load frontend auth secret from Key Vault: {exc}")
+            st.query_params.clear()
+            return False
         redirect_uri = _get_redirect_uri()
         result = app.acquire_token_by_authorization_code(
             code=auth_code,
@@ -111,33 +154,41 @@ def login_ui():
             st.query_params.clear()
             return False
 
-    # Microsoft returned an error — mark redirect as failed, show button
+    # Microsoft returned an error â€” mark redirect as failed, show button
     if auth_error:
         st.session_state._auth_redirect_failed = True
         st.query_params.clear()
         st.rerun()
 
-    # Auto-redirect to Microsoft (no prompt param — uses existing session if available)
+    # Auto-redirect to Microsoft (no prompt param â€” uses existing session if available)
     # Only show button if auto-redirect already failed (prevents infinite loop)
     if not st.session_state.get("_auth_redirect_failed"):
-        app = _get_msal_app()
+        try:
+            app = _get_msal_app()
+        except Exception as exc:
+            st.error(f"Failed to load frontend auth secret from Key Vault: {exc}")
+            return False
         redirect_uri = _get_redirect_uri()
         auth_url = app.get_authorization_request_url(
             scopes=ENTRA_SCOPES,
             redirect_uri=redirect_uri,
         )
-        # Use meta refresh to redirect — JS doesn't work in Streamlit's sandboxed context
+        # Use meta refresh to redirect â€” JS doesn't work in Streamlit's sandboxed context
         st.markdown(
             f'<meta http-equiv="refresh" content="0;url={auth_url}">',
             unsafe_allow_html=True,
         )
         st.stop()
 
-    # Show sign-in page (auto-redirect failed — fallback)
+    # Show sign-in page (auto-redirect failed â€” fallback)
     st.title("\U0001f510 Sign In")
     st.markdown("You must sign in with your Microsoft account to use this application.")
 
-    app = _get_msal_app()
+    try:
+        app = _get_msal_app()
+    except Exception as exc:
+        st.error(f"Failed to load frontend auth secret from Key Vault: {exc}")
+        return False
     redirect_uri = _get_redirect_uri()
     auth_url = app.get_authorization_request_url(
         scopes=ENTRA_SCOPES,

@@ -11,12 +11,11 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from app.settings import (
-    USE_MANAGED_IDENTITY,
     COSMOS_DB_ENDPOINT,
-    COSMOS_DB_KEY,
     COSMOS_DB_DATABASE,
     COSMOS_DB_CONTAINER,
     AUDIT_LOG_ENABLED,
+    get_azure_async_credential,
 )
 
 _cosmos_client = None
@@ -35,12 +34,10 @@ def _get_container_client():
 
     from azure.cosmos.aio import CosmosClient
 
-    if USE_MANAGED_IDENTITY:
-        from azure.identity.aio import DefaultAzureCredential
-        credential = DefaultAzureCredential()
-        _cosmos_client = CosmosClient(COSMOS_DB_ENDPOINT, credential=credential)
-    else:
-        _cosmos_client = CosmosClient(COSMOS_DB_ENDPOINT, credential=COSMOS_DB_KEY)
+    _cosmos_client = CosmosClient(
+        COSMOS_DB_ENDPOINT,
+        credential=get_azure_async_credential(),
+    )
 
     database = _cosmos_client.get_database_client(COSMOS_DB_DATABASE)
     _container_client = database.get_container_client(COSMOS_DB_CONTAINER)
@@ -89,5 +86,4 @@ async def log_action(
     except Exception as e:
         # Audit logging should never break the main application
         print(f"  [AuditLog] Failed to log action '{action}': {e}")
-
 

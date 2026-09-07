@@ -2,7 +2,7 @@
 Job-level Audit Logger for EHCP Document Processor.
 
 Logs a single comprehensive record per processing run to Cosmos DB,
-capturing the full lifecycle: upload → analyse → create EHCP.
+capturing the full lifecycle: upload â†’ analyse â†’ create EHCP.
 """
 import os
 import uuid
@@ -10,15 +10,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from app.settings import (
-    USE_MANAGED_IDENTITY,
     COSMOS_DB_ENDPOINT,
-    COSMOS_DB_KEY,
     COSMOS_DB_DATABASE,
+    COSMOS_DB_JOB_CONTAINER,
     AUDIT_LOG_ENABLED,
+    get_azure_async_credential,
 )
-
-# Job logs go to a separate container
-COSMOS_DB_JOB_CONTAINER = os.getenv("COSMOS_DB_JOB_CONTAINER", "job-logs")
 
 _cosmos_client = None
 _container_client = None
@@ -32,14 +29,8 @@ def _get_container_client():
     if not COSMOS_DB_ENDPOINT:
         return None
     from azure.cosmos.aio import CosmosClient
-    if USE_MANAGED_IDENTITY:
-        from azure.identity.aio import DefaultAzureCredential
-        credential = DefaultAzureCredential()
-        _cosmos_client = CosmosClient(
-            COSMOS_DB_ENDPOINT, credential=credential)
-    else:
-        _cosmos_client = CosmosClient(
-            COSMOS_DB_ENDPOINT, credential=COSMOS_DB_KEY)
+    _cosmos_client = CosmosClient(
+        COSMOS_DB_ENDPOINT, credential=get_azure_async_credential())
     database = _cosmos_client.get_database_client(COSMOS_DB_DATABASE)
     _container_client = database.get_container_client(COSMOS_DB_JOB_CONTAINER)
     return _container_client
@@ -213,7 +204,7 @@ async def save_job_record(job: dict):
         if container is None:
             print(f"  [JobLog] No Cosmos container configured, skipping job log")
             return
-        # Strip raw token counts before persisting — only keep display values
+        # Strip raw token counts before persisting â€” only keep display values
         save_copy = dict(job)
         if "token_usage" in save_copy:
             save_copy["token_usage"] = {
@@ -243,7 +234,7 @@ async def load_job_record(job_id: str, session_id: str = None) -> Optional[dict]
             item = await container.read_item(
                 item=job_id, partition_key=partition_key)
         except Exception:
-            # Not found (or not yet created) — caller will create it.
+            # Not found (or not yet created) â€” caller will create it.
             return None
         # Restore raw token counters (stripped before save) so accumulation works
         if "token_usage" in item:
