@@ -1,0 +1,57 @@
+{
+  "Child_Details": {
+    "Name": "Ari Solven-Trail",
+    "Date_of_Birth": "14/03/2016",
+    "Address": "10 Orchard Lane, Leicester, LE1 2AB",
+    "Mosaic_ID": "SC-1024",
+    "Status": "Child in need not open to social care"
+  },
+  "Child_Views": "Ari likes spending time with his family, drawing and going to the park.",
+  "Parent_Carer_Views": "The family would value consistent support around routines, communication and after-school transitions.",
+  "Social_Care_Needs": {
+    "Strengths": "Ari has a warm relationship with his parents and enjoys structured family routines.",
+    "Needs": "The family benefits from practical support to maintain consistent routines and access community activities."
+  },
+  "Outcomes": {
+    "Long_Term_Outcomes": "Ari will participate confidently in family and community routines with reduced distress.",
+    "Medium_Term_Outcomes": "Ari will follow an after-school routine supported by visuals and consistent adult prompts."
+  },
+  "H1_Social_Care_Provision": {
+    "Provision": [
+      "Family support worker to model visual routines and transition strategies."
+    ],
+    "By_Whom": [
+      "Family support service"
+    ],
+    "Frequency": [
+      "Fortnightly for 12 weeks"
+    ],
+    "Met_Need": [
+      "Builds consistency and confidence during transitions"
+    ]
+  },
+  "H2_Social_Care_Provision": {
+    "Provision": [
+      "Advice on accessing local inclusive activities and short breaks."
+    ],
+    "By_Whom": [
+      "Early help practitioner"
+    ],
+    "Frequency": [
+      "As required"
+    ],
+    "Met_Need": [
+      "Improves access to community support"
+    ]
+  },
+  "Advice_Giver": {
+    "Name": "Taylor Reed",
+    "Role": "Social Care Practitioner",
+    "Date": "01/09/2026"
+  },
+  "Advice_Quality_Assured_By": {
+    "Name": "Jamie Chen",
+    "Role": "Team Manager",
+    "Date": "02/09/2026"
+  }
+}

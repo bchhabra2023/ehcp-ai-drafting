@@ -1,0 +1,16 @@
+{
+  "Child_Details": {
+    "Name": "Ari Solven-Trail",
+    "DOB": "14/03/2016",
+    "NHS_Number": "123 456 7890",
+    "Sex": "Male",
+    "Address": "10 Orchard Lane, Leicester",
+    "Postcode": "LE1 2AB",
+    "Home_Language": "English"
+  },
+  "Medical_History": "Ari was born at term and has no significant inpatient history. He is under community paediatrics for neurodevelopmental monitoring.",
+  "Health_Needs": "Ari presents with speech, language and sensory regulation needs that affect his access to learning and daily routines.",
+  "Outcomes": "Ari will communicate discomfort promptly and use agreed regulation strategies across school and home.",
+  "Health_Provision": "Termly speech and language therapy review, sensory advice programme and a shared regulation plan.",
+  "Advice_Date": "01/09/2026"
+}

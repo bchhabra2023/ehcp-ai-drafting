@@ -14,10 +14,10 @@ from typing import List, Optional
 from fastapi import APIRouter, Body, UploadFile, File, Header, HTTPException, Depends
 from fastapi.responses import FileResponse, StreamingResponse
 
+from app.logging_utils import emit_log, describe_exception
 from app.settings import (
     TEMP_DIR, OUTPUT_DIR, TEMPLATE_DOCX, MAPPING_WORKBOOK, EXPECTED_OUTPUT_DOCX,
-    USE_MANAGED_IDENTITY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY,
-    AZURE_OPENAI_DEPLOYMENT, AZURE_OPENAI_API_VERSION,
+    FOUNDRY_ENDPOINT, FOUNDRY_MODEL_NAME, FOUNDRY_API_VERSION,
     MODEL_MAX_TOKENS, get_openai_token_provider,
 )
 from app.models.schemas import (
@@ -25,6 +25,12 @@ from app.models.schemas import (
     WriteRequest, WriteResponse,
 )
 from app.services.orchestrator import run_maf_pipeline, run_maf_writer_pipeline
+from app.services.e2e_fixtures import (
+    build_fixture_progress_events,
+    e2e_fixture_mode_enabled,
+    load_fixture_child_name,
+    write_fixture_outputs,
+)
 from app.services.blob_storage import (
     delete_blob, is_blob_storage_enabled,
     upload_file_to_blob, ensure_local_file, blob_key_for_path,
@@ -39,6 +45,12 @@ from app.services.job_logger import (
 from app.auth import get_current_user
 
 router = APIRouter(prefix="/api", tags=["pipeline"])
+
+
+def _basename(path: str | None) -> str | None:
+    if not path:
+        return None
+    return os.path.basename(path)
 
 
 # ---------------------------------------------------------
@@ -223,7 +235,7 @@ def detect_doc_type_by_content(file_path: str) -> str:
 
 
 # ---------------------------------------------------------
-# Child name extraction from document content (via Azure OpenAI)
+# Child name extraction from document content (via Microsoft Foundry)
 # ---------------------------------------------------------
 
 
@@ -233,18 +245,11 @@ _aoai_client = None
 def _get_aoai_client() -> AzureOpenAI:
     global _aoai_client
     if _aoai_client is None:
-        if USE_MANAGED_IDENTITY:
-            _aoai_client = AzureOpenAI(
-                azure_endpoint=AZURE_OPENAI_ENDPOINT,
-                azure_ad_token_provider=get_openai_token_provider(),
-                api_version=AZURE_OPENAI_API_VERSION,
-            )
-        else:
-            _aoai_client = AzureOpenAI(
-                azure_endpoint=AZURE_OPENAI_ENDPOINT,
-                api_key=AZURE_OPENAI_API_KEY,
-                api_version=AZURE_OPENAI_API_VERSION,
-            )
+        _aoai_client = AzureOpenAI(
+            azure_endpoint=FOUNDRY_ENDPOINT,
+            azure_ad_token_provider=get_openai_token_provider(),
+            api_version=FOUNDRY_API_VERSION,
+        )
     return _aoai_client
 
 
@@ -324,16 +329,16 @@ def _extract_name_from_filename(file_path: str) -> str | None:
 def extract_child_name(file_path: str) -> str | None:
     """Extract the child's full name using a strict 2-layer approach:
 
-    Layer 1 — LLM: Send the first ~2000 chars of document text + filename
-              to Azure OpenAI for name extraction.
-    Layer 2 — Filename parsing: If Layer 1 fails, parse the filename itself
+    Layer 1 - LLM: Send the first ~2000 chars of document text + filename
+              to the Foundry-hosted model deployment for name extraction.
+    Layer 2 - Filename parsing: If Layer 1 fails, parse the filename itself
               to extract a plausible name from naming conventions like
               'Ruben_Amos_Health_Advice.docx'.
     """
     filename = os.path.basename(file_path)
     text = _extract_text_quick(file_path, max_chars=5000)
 
-    # ── Layer 1: LLM-based extraction ──
+    # -- Layer 1: LLM-based extraction --
     if text.strip():
         try:
             client = _get_aoai_client()
@@ -343,7 +348,7 @@ def extract_child_name(file_path: str) -> str | None:
                 "unknown", "n/a", "none", "the",
             }
             resp = client.chat.completions.create(
-                model=AZURE_OPENAI_DEPLOYMENT,
+                model=FOUNDRY_MODEL_NAME,
                 messages=[
                     {
                         "role": "system",
@@ -379,7 +384,7 @@ def extract_child_name(file_path: str) -> str | None:
         except Exception as e:
             print(f"[extract_child_name] Layer 1 ERROR for {filename}: {e}")
 
-    # ── Layer 2: Filename-based extraction ──
+    # -- Layer 2: Filename-based extraction --
     fallback = _extract_name_from_filename(file_path)
     if fallback:
         print(
@@ -401,7 +406,7 @@ async def get_doc_types():
 
 
 # ---------------------------------------------------------
-# Mapping fields endpoint — returns the output-document fields
+# Mapping fields endpoint - returns the output-document fields
 # from the mapping Excel, per doc type.
 # ---------------------------------------------------------
 
@@ -509,6 +514,15 @@ async def upload_files(
     """Upload files to the backend temp directory."""
     temp_dir = _session_temp_dir(x_session_id)
     os.makedirs(temp_dir, exist_ok=True)
+    emit_log(
+        "pipeline",
+        "upload_request_start",
+        session_id=x_session_id,
+        job_id=x_job_id,
+        file_count=len(files),
+        files=[f.filename for f in files],
+        temp_dir=temp_dir,
+    )
 
     # Reuse existing job record if job_id provided, otherwise create new.
     # When creating, honour the caller-supplied job_id so repeated uploads for
@@ -527,15 +541,40 @@ async def upload_files(
         file_path = os.path.join(temp_dir, file.filename)
         content = await file.read()
         file_size = len(content)
+        emit_log(
+            "pipeline",
+            "upload_file_received",
+            session_id=x_session_id,
+            job_id=job["job_id"],
+            filename=file.filename,
+            file_size=file_size,
+            file_path=file_path,
+        )
 
         try:
             with open(file_path, "wb") as f:
                 f.write(content)
+            emit_log(
+                "pipeline",
+                "upload_file_saved_local",
+                session_id=x_session_id,
+                job_id=job["job_id"],
+                filename=file.filename,
+                file_path=file_path,
+            )
 
             # Upload to blob storage using a session-scoped key so that a later
             # analyze/write step running on a different replica can retrieve it.
             if is_blob_storage_enabled():
                 await asyncio.to_thread(upload_file_to_blob, file_path)
+                emit_log(
+                    "pipeline",
+                    "upload_file_saved_blob",
+                    session_id=x_session_id,
+                    job_id=job["job_id"],
+                    filename=file.filename,
+                    blob_key=blob_key_for_path(file_path),
+                )
 
             # Detect doc type by content first, fall back to filename.
             # These do blocking work (docx parsing + a synchronous Azure
@@ -545,8 +584,11 @@ async def upload_files(
             detected = await asyncio.to_thread(
                 detect_doc_type_by_content, file_path)
 
-            # Extract child name from document content (blocking LLM call)
-            child_name = await asyncio.to_thread(extract_child_name, file_path)
+            if e2e_fixture_mode_enabled():
+                child_name = load_fixture_child_name() or _extract_name_from_filename(file_path)
+            else:
+                # Extract child name from document content (blocking LLM call)
+                child_name = await asyncio.to_thread(extract_child_name, file_path)
 
             uploaded.append({
                 "filename": file.filename,
@@ -554,6 +596,15 @@ async def upload_files(
                 "detected_type": detected,
                 "child_name": child_name,
             })
+            emit_log(
+                "pipeline",
+                "upload_file_processed",
+                session_id=x_session_id,
+                job_id=job["job_id"],
+                filename=file.filename,
+                detected_type=detected,
+                child_name=child_name,
+            )
 
             # Add to job record
             add_upload_document(job, file.filename, file_size, detected)
@@ -561,6 +612,14 @@ async def upload_files(
         except Exception as e:
             add_upload_failure(job, file.filename, str(e))
             current_failures.append(file.filename)
+            emit_log(
+                "pipeline",
+                "upload_file_failed",
+                session_id=x_session_id,
+                job_id=job["job_id"],
+                filename=file.filename,
+                **describe_exception(e),
+            )
 
     # Persist initial job record so later pipeline stages can load it
     await save_job_record(job)
@@ -577,11 +636,25 @@ async def upload_files(
 
     if current_failures:
         failed_names = ", ".join(current_failures)
+        emit_log(
+            "pipeline",
+            "upload_request_failed",
+            session_id=x_session_id,
+            job_id=job["job_id"],
+            failed_files=current_failures,
+        )
         raise HTTPException(
             status_code=503,
             detail=f"Upload failed for {failed_names}. Please retry.",
         )
 
+    emit_log(
+        "pipeline",
+        "upload_request_complete",
+        session_id=x_session_id,
+        job_id=job["job_id"],
+        uploaded_files=[item["filename"] for item in uploaded],
+    )
     return {"uploaded": uploaded, "job_id": job["job_id"]}
 
 
@@ -591,7 +664,7 @@ async def analyze_documents(
     x_session_id: str | None = Header(None),
     current_user: Optional[dict] = Depends(get_current_user),
 ):
-    """Run the reader pipeline (Reader → Extractor → Validator → QualityChecker)."""
+    """Run the reader pipeline (Reader -> Extractor -> Validator -> QualityChecker)."""
     temp_dir = _session_temp_dir(x_session_id)
     os.makedirs(temp_dir, exist_ok=True)
 
@@ -608,12 +681,36 @@ async def analyze_documents(
             "schema_file": info["schema"],
             "output_file": os.path.join(temp_dir, f"{base_name}_output.json"),
             "validation_output_file": os.path.join(temp_dir, f"{base_name}_validation.json"),
+            "doc_type": doc_type,
+            "doc_key": info["key"],
         })
 
-    # Inputs may have been uploaded on a different replica — pull them from
+    # Inputs may have been uploaded on a different replica - pull them from
     # blob storage if they are missing locally.
     for cfg in file_configs:
         ensure_local_file(cfg["input_docx"])
+
+    if e2e_fixture_mode_enabled():
+        results = []
+        for item in write_fixture_outputs(file_configs):
+            results.append(AnalyzeResult(
+                filename=item["filename"],
+                output_file=item["output_file"],
+                validation_file=item["validation_file"],
+                success=item["success"],
+                error=item.get("error"),
+            ))
+
+        await log_action(
+            action="analyze",
+            session_id=x_session_id,
+            user=current_user,
+            details={
+                "files": [{"filename": r.filename, "success": r.success, "error": r.error} for r in results],
+                "mode": "fixture",
+            },
+        )
+        return AnalyzeResponse(results=results)
 
     # Run the multi-agent pipeline
     maf_results, document_texts = await run_maf_pipeline(file_configs)
@@ -672,6 +769,15 @@ async def analyze_documents_stream(
 
     temp_dir = _session_temp_dir(x_session_id)
     os.makedirs(temp_dir, exist_ok=True)
+    emit_log(
+        "pipeline",
+        "analyze_stream_request_start",
+        session_id=x_session_id,
+        job_id=job_id,
+        file_count=len(request.files),
+        files=[{"filename": fc.filename, "doc_type": fc.doc_type} for fc in request.files],
+        temp_dir=temp_dir,
+    )
 
     file_configs = []
     for fc in request.files:
@@ -686,16 +792,37 @@ async def analyze_documents_stream(
             "output_file": os.path.join(temp_dir, f"{base_name}_output.json"),
             "validation_output_file": os.path.join(temp_dir, f"{base_name}_validation.json"),
             "doc_type": doc_type,
+            "doc_key": info["key"],
         })
 
-    # Inputs may have been uploaded on a different replica — pull them from
+    # Inputs may have been uploaded on a different replica - pull them from
     # blob storage if they are missing locally.
     for cfg in file_configs:
-        ensure_local_file(cfg["input_docx"])
+        restored = ensure_local_file(cfg["input_docx"])
+        emit_log(
+            "pipeline",
+            "analyze_stream_input_ready",
+            session_id=x_session_id,
+            job_id=job_id,
+            filename=_basename(cfg["input_docx"]),
+            doc_type=cfg["doc_type"],
+            local_path=cfg["input_docx"],
+            exists_locally=os.path.exists(cfg["input_docx"]),
+            restored_from_blob=restored and os.path.exists(cfg["input_docx"]),
+            output_file=_basename(cfg["output_file"]),
+            validation_file=_basename(cfg["validation_output_file"]),
+        )
 
     progress_queue = queue.Queue()
 
     def progress_callback(event):
+        emit_log(
+            "pipeline",
+            "analyze_stream_progress",
+            session_id=x_session_id,
+            job_id=job_id,
+            **event,
+        )
         progress_queue.put(event)
 
     # Update job record with analyse start (saved only at end of pipeline)
@@ -705,6 +832,48 @@ async def analyze_documents_stream(
 
     async def event_generator():
         nonlocal job
+        if e2e_fixture_mode_enabled():
+            await asyncio.sleep(0.1)
+            for event in build_fixture_progress_events(file_configs):
+                yield f"data: {json.dumps(event)}\n\n"
+                await asyncio.sleep(0.02)
+
+            results = write_fixture_outputs(file_configs)
+
+            if job:
+                set_analyse_complete(job, error="")
+                mapping_fields = _load_mapping_fields()
+                for cfg, result in zip(file_configs, results):
+                    if not result["success"]:
+                        continue
+                    with open(cfg["output_file"], "r", encoding="utf-8") as of:
+                        output_data = json.load(of)
+                    fields_def = mapping_fields.get(cfg["doc_key"], [])
+                    filled, empty = _count_mapping_fields(output_data, fields_def)
+                    add_completeness_entry(
+                        job,
+                        cfg["doc_type"],
+                        len(filled) + len(empty),
+                        len(filled),
+                        len(empty),
+                        empty,
+                        source_file=os.path.basename(cfg["input_docx"]),
+                    )
+                await save_job_record(job)
+
+            await log_action(
+                action="analyze_complete",
+                session_id=x_session_id,
+                user=current_user,
+                details={
+                    "files": [{"filename": r["filename"], "success": r["success"], "error": r.get("error")} for r in results],
+                    "job_id": job_id,
+                    "mode": "fixture",
+                },
+            )
+            yield f"data: {json.dumps({'type': 'complete', 'results': results})}\n\n"
+            return
+
         # Run pipeline in a background thread so we can stream progress
         loop = asyncio.get_event_loop()
 
@@ -738,6 +907,13 @@ async def analyze_documents_stream(
                 else:
                     results.append({"filename": fc.filename, "output_file": f"{base_name}_output.json",
                                    "validation_file": f"{base_name}_validation.json", "success": True})
+            emit_log(
+                "pipeline",
+                "analyze_stream_pipeline_complete",
+                session_id=x_session_id,
+                job_id=job_id,
+                results=results,
+            )
 
             # Update job record with analyse complete + completeness
             if job:
@@ -801,6 +977,13 @@ async def analyze_documents_stream(
             if job:
                 set_error(job, str(e))
                 await save_job_record(job)
+            emit_log(
+                "pipeline",
+                "analyze_stream_pipeline_failed",
+                session_id=x_session_id,
+                job_id=job_id,
+                **describe_exception(e),
+            )
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
@@ -812,7 +995,7 @@ async def write_ehcp(
     x_session_id: str | None = Header(None),
     current_user: Optional[dict] = Depends(get_current_user),
 ):
-    """Run the writer pipeline (TemplateWriter → WriterValidator)."""
+    """Run the writer pipeline (TemplateWriter -> WriterValidator)."""
     if not os.path.exists(TEMPLATE_DOCX):
         raise HTTPException(status_code=400, detail="Template DOCX not found")
     if not os.path.exists(MAPPING_WORKBOOK):
@@ -820,8 +1003,16 @@ async def write_ehcp(
             status_code=400, detail="Mapping workbook not found")
 
     temp_dir = _session_temp_dir(x_session_id)
+    emit_log(
+        "pipeline",
+        "write_ehcp_request_start",
+        session_id=x_session_id,
+        job_id=request.job_id,
+        json_paths=request.json_paths,
+        temp_dir=temp_dir,
+    )
 
-    # Resolve json paths — frontend sends filenames, resolve to temp/ paths.
+    # Resolve json paths - frontend sends filenames, resolve to temp/ paths.
     # The extraction step may have run on a different replica, so pull each
     # JSON from blob storage if it is missing on this one.
     json_paths = {}
@@ -854,6 +1045,15 @@ async def write_ehcp(
     filled_filename = os.path.basename(filled_path) if filled_path else None
     filled_size = os.path.getsize(
         filled_path) if filled_path and os.path.exists(filled_path) else 0
+    emit_log(
+        "pipeline",
+        "write_ehcp_request_complete",
+        session_id=x_session_id,
+        job_id=request.job_id,
+        filled_docx_path=filled_path,
+        filled_filename=filled_filename,
+        filled_size=filled_size,
+    )
 
     # Update job record with write-ehcp completion
     job = await _load_job_record(x_session_id, request.job_id)

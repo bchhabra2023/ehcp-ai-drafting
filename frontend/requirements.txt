@@ -3,3 +3,5 @@ requests
 python-dotenv
 msal
 PyJWT
+azure-identity
+azure-keyvault-secrets

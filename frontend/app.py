@@ -38,6 +38,29 @@ if "job_id" not in st.session_state:
 SESSION_HEADERS = {"X-Session-ID": st.session_state.session_id}
 
 
+def _log_frontend(event: str, **fields):
+    payload = {
+        "event": event,
+        "session_id": st.session_state.get("session_id"),
+        "job_id": st.session_state.get("job_id"),
+    }
+    payload.update(fields)
+    print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)
+
+
+def _preview_text(text: str, limit: int = 500) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "...<truncated>"
+
+
+def _response_preview(response: requests.Response) -> str:
+    try:
+        return _preview_text(response.text or "")
+    except Exception:
+        return ""
+
+
 def _get_headers() -> dict:
     """Merge session headers with auth headers and user info."""
     headers = {**SESSION_HEADERS}
@@ -50,6 +73,15 @@ def _get_headers() -> dict:
     if user_email:
         headers["X-User-Email"] = user_email
     return headers
+
+
+_log_frontend(
+    "frontend_startup",
+    backend_url=BACKEND_URL,
+    api_base=API_BASE,
+    auth_enabled=AUTH_ENABLED,
+    debug_mode=DEBUG_MODE,
+)
 
 
 def _log_activity(action: str, details: dict = None):
@@ -378,16 +410,6 @@ font-family: Arial, Helvetica, sans-serif;
 ">
 Draft EHCP {ENV}
 </div>
-
-<p style="
-color:white;
-font-size:12px;
-margin-top:0px;
-margin-bottom:0px;
-font-family: Arial, Helvetica, sans-serif;
-">
-Leicestershire County Council
-</p>
 
 </div>
 """, unsafe_allow_html=True)
@@ -800,6 +822,13 @@ if uploaded_files:
                     # Pass job_id to accumulate documents in same job record
                     if st.session_state.get("job_id"):
                         upload_headers["X-Job-Id"] = st.session_state["job_id"]
+                    _log_frontend(
+                        "upload_request_start",
+                        filename=f.name,
+                        api_url=f"{API_BASE}/upload",
+                        file_size=len(file_bytes),
+                        header_keys=sorted(upload_headers.keys()),
+                    )
 
                     resp = requests.post(
                         f"{API_BASE}/upload",
@@ -808,6 +837,12 @@ if uploaded_files:
                         timeout=120,
                     )
                     resp.raise_for_status()
+                    _log_frontend(
+                        "upload_request_complete",
+                        filename=f.name,
+                        status_code=resp.status_code,
+                        response_preview=_response_preview(resp),
+                    )
 
                     upload_data = resp.json()
                     # Store job_id from upload response
@@ -834,6 +869,16 @@ if uploaded_files:
                 except Exception as e:
                     upload_failed = True
                     st.session_state.upload_errors[f.name] = str(e)
+                    status_code = getattr(getattr(e, "response", None), "status_code", None)
+                    response_preview = _response_preview(e.response) if getattr(e, "response", None) is not None else ""
+                    _log_frontend(
+                        "upload_request_failed",
+                        filename=f.name,
+                        error_type=type(e).__name__,
+                        error=str(e),
+                        status_code=status_code,
+                        response_preview=response_preview,
+                    )
                     st.error(f"Upload failed for {f.name}: {e}")
 
         if upload_failed:
@@ -1611,9 +1656,21 @@ if uploaded_files:
                             upload_headers = _get_headers()
                             if st.session_state.get("job_id"):
                                 upload_headers["X-Job-Id"] = st.session_state["job_id"]
+                            _log_frontend(
+                                "processing_upload_request_start",
+                                filename=file.name,
+                                api_url=f"{API_BASE}/upload",
+                                header_keys=sorted(upload_headers.keys()),
+                            )
                             resp = requests.post(
                                 f"{API_BASE}/upload", files=files, headers=upload_headers, timeout=120)
                             resp.raise_for_status()
+                            _log_frontend(
+                                "processing_upload_request_complete",
+                                filename=file.name,
+                                status_code=resp.status_code,
+                                response_preview=_response_preview(resp),
+                            )
                             upload_data = resp.json()
                             # Store job_id from upload response
                             if upload_data.get("job_id"):
@@ -1632,6 +1689,16 @@ if uploaded_files:
                                     st.session_state.child_names[item["filename"]
                                                                  ] = item["child_name"]
                         except Exception as e:
+                            status_code = getattr(getattr(e, "response", None), "status_code", None)
+                            response_preview = _response_preview(e.response) if getattr(e, "response", None) is not None else ""
+                            _log_frontend(
+                                "processing_upload_request_failed",
+                                filename=file.name,
+                                error_type=type(e).__name__,
+                                error=str(e),
+                                status_code=status_code,
+                                response_preview=response_preview,
+                            )
                             st.error(f"Upload failed for {file.name}: {e}")
                             st.session_state.processing_active = False
                             st.stop()
@@ -1668,6 +1735,11 @@ if uploaded_files:
                 analyze_result = None
 
                 try:
+                    _log_frontend(
+                        "analyze_stream_request_start",
+                        api_url=f"{API_BASE}/analyze-stream",
+                        files=file_configs,
+                    )
                     resp = requests.post(
                         f"{API_BASE}/analyze-stream",
                         json={"files": file_configs,
@@ -1677,10 +1749,23 @@ if uploaded_files:
                         stream=True,
                     )
                     resp.raise_for_status()
+                    _log_frontend(
+                        "analyze_stream_request_connected",
+                        status_code=resp.status_code,
+                    )
 
                     for line in resp.iter_lines(decode_unicode=True):
                         if line and line.startswith("data: "):
                             event = json.loads(line[6:])
+                            _log_frontend(
+                                "analyze_stream_event",
+                                event_type=event.get("type"),
+                                stage=event.get("stage"),
+                                action=event.get("event"),
+                                agent=event.get("agent"),
+                                file_path=event.get("file_path"),
+                                error=event.get("error"),
+                            )
 
                             # Final result message
                             if event.get("type") == "complete":
@@ -1716,6 +1801,15 @@ if uploaded_files:
                             )
 
                 except Exception as e:
+                    status_code = getattr(getattr(e, "response", None), "status_code", None)
+                    response_preview = _response_preview(e.response) if getattr(e, "response", None) is not None else ""
+                    _log_frontend(
+                        "analyze_stream_request_failed",
+                        error_type=type(e).__name__,
+                        error=str(e),
+                        status_code=status_code,
+                        response_preview=response_preview,
+                    )
                     st.error(f"Pipeline error: {e}")
                     st.session_state.processing_active = False
                     st.stop()
@@ -1723,6 +1817,11 @@ if uploaded_files:
                 # Fallback: if streaming didn't return results, call regular endpoint
                 if analyze_result is None:
                     try:
+                        _log_frontend(
+                            "analyze_fallback_request_start",
+                            api_url=f"{API_BASE}/analyze",
+                            files=file_configs,
+                        )
                         resp = requests.post(
                             f"{API_BASE}/analyze",
                             json={"files": file_configs},
@@ -1730,8 +1829,22 @@ if uploaded_files:
                             timeout=600,
                         )
                         resp.raise_for_status()
+                        _log_frontend(
+                            "analyze_fallback_request_complete",
+                            status_code=resp.status_code,
+                            response_preview=_response_preview(resp),
+                        )
                         analyze_result = resp.json()
                     except Exception as e:
+                        status_code = getattr(getattr(e, "response", None), "status_code", None)
+                        response_preview = _response_preview(e.response) if getattr(e, "response", None) is not None else ""
+                        _log_frontend(
+                            "analyze_fallback_request_failed",
+                            error_type=type(e).__name__,
+                            error=str(e),
+                            status_code=status_code,
+                            response_preview=response_preview,
+                        )
                         st.error(f"Pipeline error: {e}")
                         st.session_state.processing_active = False
                         st.stop()

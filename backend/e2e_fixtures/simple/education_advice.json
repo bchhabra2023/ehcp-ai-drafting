@@ -1,0 +1,147 @@
+{
+  "Pupil_Views": {
+    "How_I_communicate": [
+      "Ari communicates best with visual prompts, processing time and short instructions."
+    ],
+    "Strengths_Interests_Passions_Skills": [
+      "Ari enjoys practical science activities, drawing and routines."
+    ],
+    "Future_Aspirations": [
+      "Ari wants to feel confident in class and join group activities."
+    ],
+    "Other_things_Id_like_people_to_know": [
+      "Ari can become anxious when routines change unexpectedly."
+    ]
+  },
+  "Parent_Carer_Views": {
+    "Journey_so_far": [
+      "Ari has made steady progress with predictable routines and adult support."
+    ],
+    "Strengths_Interests_Passions_Skills": [
+      "He is kind, curious and responds well to praise."
+    ],
+    "Family_Future_Aspirations": [
+      "The family would like Ari to communicate his needs more independently."
+    ],
+    "Other_things_parents_would_like_people_to_know": [
+      "Transitions remain difficult at home and at school."
+    ],
+    "Community_support": [
+      "The family uses a local autism support group and after-school club."
+    ]
+  },
+  "Primary_area_of_need": {
+    "Primary_area_of_need": [
+      "Communication and interaction"
+    ]
+  },
+  "Cognition_and_Learning": {
+    "Strengths": [
+      "Ari engages well with concrete examples and repetition."
+    ],
+    "Needs": {
+      "Need_1": "Ari needs support to retain and sequence multi-step instructions."
+    },
+    "Long_Term_Outcomes": [
+      "Ari will follow classroom routines with increasing independence."
+    ],
+    "Medium_Term_Outcomes": [
+      "Ari will use a visual timetable and check-in prompts each day."
+    ],
+    "Provision": [
+      "Daily pre-teaching and visual timetable review."
+    ],
+    "By_Whom": [
+      "Class teacher and teaching assistant"
+    ],
+    "Frequency": [
+      "Daily"
+    ],
+    "Met_Need": [
+      "Improves understanding of lesson routines"
+    ]
+  },
+  "Communication_and_Interaction": {
+    "Strengths": [
+      "Ari responds well to familiar adults and clear language."
+    ],
+    "Needs": {
+      "Need_1": "Ari needs explicit teaching of social communication and turn-taking."
+    },
+    "Long_Term_Outcomes": [
+      "Ari will participate in group tasks using agreed communication supports."
+    ],
+    "Medium_Term_Outcomes": [
+      "Ari will practise turn-taking and asking for help in structured activities."
+    ],
+    "Provision": [
+      "Weekly social communication group with visual prompts."
+    ],
+    "By_Whom": [
+      "SENCO and speech and language therapist"
+    ],
+    "Frequency": [
+      "Weekly"
+    ],
+    "Met_Need": [
+      "Builds confidence and expressive communication"
+    ]
+  },
+  "Social_Emotional_Mental_Health": {
+    "Strengths": [
+      "Ari is motivated by praise and predictable routines."
+    ],
+    "Needs": {
+      "Need_1": "Ari needs support to manage anxiety when expectations change."
+    },
+    "Long_Term_Outcomes": [
+      "Ari will use agreed regulation strategies during changes in routine."
+    ],
+    "Medium_Term_Outcomes": [
+      "Ari will identify when he needs a sensory or movement break."
+    ],
+    "Provision": [
+      "Access to a now-and-next board and a calm breakout space."
+    ],
+    "By_Whom": [
+      "School staff"
+    ],
+    "Frequency": [
+      "Throughout the school day"
+    ],
+    "Met_Need": [
+      "Reduces distress and improves readiness to learn"
+    ]
+  },
+  "Sensory_and_Physical": {
+    "Strengths": [
+      "Ari enjoys movement breaks and responds to sensory supports."
+    ],
+    "Needs": {
+      "Need_1": "Ari needs sensory regulation strategies to maintain attention."
+    },
+    "Long_Term_Outcomes": [
+      "Ari will sustain attention for longer with planned sensory supports."
+    ],
+    "Medium_Term_Outcomes": [
+      "Ari will use a movement break plan between demanding tasks."
+    ],
+    "Provision": [
+      "Scheduled movement breaks and access to sensory tools."
+    ],
+    "By_Whom": [
+      "Class team"
+    ],
+    "Frequency": [
+      "At least three times daily"
+    ],
+    "Met_Need": [
+      "Supports regulation and concentration"
+    ]
+  },
+  "Advice_Giver": {
+    "Name": "Casey Morgan",
+    "Role": "Educational Psychologist",
+    "Date": "01/09/2026"
+  }
+}

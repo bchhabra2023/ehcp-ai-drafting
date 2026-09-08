@@ -1,6 +1,9 @@
-from app.settings import USE_MANAGED_IDENTITY, get_azure_credential
+from app.settings import (
+    AZURE_STORAGE_ACCOUNT_URL,
+    AZURE_STORAGE_CONTAINER_NAME,
+    get_azure_credential,
+)
 import os
-import json
 from dotenv import load_dotenv
 from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob import BlobServiceClient
@@ -8,32 +11,18 @@ from azure.storage.blob import BlobServiceClient
 load_dotenv()
 
 
-AZURE_STORAGE_CONNECTION_STRING = os.getenv(
-    "AZURE_STORAGE_CONNECTION_STRING", "")
-AZURE_STORAGE_ACCOUNT_URL = os.getenv("AZURE_STORAGE_ACCOUNT_URL", "")
-AZURE_STORAGE_CONTAINER_NAME = os.getenv(
-    "AZURE_STORAGE_CONTAINER_NAME", "ehcp-outputs")
-
-
 def get_blob_service_client():
-    """Return a BlobServiceClient using managed identity or connection string."""
-    if USE_MANAGED_IDENTITY:
-        if not AZURE_STORAGE_ACCOUNT_URL:
-            raise ValueError(
-                "AZURE_STORAGE_ACCOUNT_URL is not set. "
-                "Add it to your .env file to use managed identity with blob storage. "
-                "Example: https://<account>.blob.core.windows.net"
-            )
-        return BlobServiceClient(
-            account_url=AZURE_STORAGE_ACCOUNT_URL,
-            credential=get_azure_credential(),
-        )
-    if not AZURE_STORAGE_CONNECTION_STRING:
+    """Return a BlobServiceClient using managed identity."""
+    if not AZURE_STORAGE_ACCOUNT_URL:
         raise ValueError(
-            "AZURE_STORAGE_CONNECTION_STRING is not set. "
-            "Add it to your .env file to enable blob storage."
+            "AZURE_STORAGE_ACCOUNT_URL is not set. "
+            "Add it to your .env file to enable managed-identity blob access. "
+            "Example: https://<account>.blob.core.windows.net"
         )
-    return BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+    return BlobServiceClient(
+        account_url=AZURE_STORAGE_ACCOUNT_URL,
+        credential=get_azure_credential(),
+    )
 
 
 def _ensure_container(blob_service_client):
@@ -104,10 +93,8 @@ def upload_bytes_to_blob(data: bytes, blob_name: str, content_type: str = "appli
 
 
 def is_blob_storage_enabled() -> bool:
-    """Return True if blob storage is configured (via connection string or managed identity)."""
-    if USE_MANAGED_IDENTITY:
-        return bool(AZURE_STORAGE_ACCOUNT_URL)
-    return bool(AZURE_STORAGE_CONNECTION_STRING)
+    """Return True if blob storage is configured."""
+    return bool(AZURE_STORAGE_ACCOUNT_URL)
 
 
 # ---------------------------------------------------------
