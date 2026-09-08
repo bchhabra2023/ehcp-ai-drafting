@@ -411,16 +411,6 @@ font-family: Arial, Helvetica, sans-serif;
 Draft EHCP {ENV}
 </div>
 
-<p style="
-color:white;
-font-size:12px;
-margin-top:0px;
-margin-bottom:0px;
-font-family: Arial, Helvetica, sans-serif;
-">
-Leicestershire County Council
-</p>
-
 </div>
 """, unsafe_allow_html=True)
 
