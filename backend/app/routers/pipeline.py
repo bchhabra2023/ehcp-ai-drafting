@@ -329,16 +329,16 @@ def _extract_name_from_filename(file_path: str) -> str | None:
 def extract_child_name(file_path: str) -> str | None:
     """Extract the child's full name using a strict 2-layer approach:
 
-    Layer 1 â€” LLM: Send the first ~2000 chars of document text + filename
+    Layer 1 - LLM: Send the first ~2000 chars of document text + filename
               to the Foundry-hosted model deployment for name extraction.
-    Layer 2 â€” Filename parsing: If Layer 1 fails, parse the filename itself
+    Layer 2 - Filename parsing: If Layer 1 fails, parse the filename itself
               to extract a plausible name from naming conventions like
               'Ruben_Amos_Health_Advice.docx'.
     """
     filename = os.path.basename(file_path)
     text = _extract_text_quick(file_path, max_chars=5000)
 
-    # â”€â”€ Layer 1: LLM-based extraction â”€â”€
+    # -- Layer 1: LLM-based extraction --
     if text.strip():
         try:
             client = _get_aoai_client()
@@ -384,7 +384,7 @@ def extract_child_name(file_path: str) -> str | None:
         except Exception as e:
             print(f"[extract_child_name] Layer 1 ERROR for {filename}: {e}")
 
-    # â”€â”€ Layer 2: Filename-based extraction â”€â”€
+    # -- Layer 2: Filename-based extraction --
     fallback = _extract_name_from_filename(file_path)
     if fallback:
         print(
@@ -406,7 +406,7 @@ async def get_doc_types():
 
 
 # ---------------------------------------------------------
-# Mapping fields endpoint â€” returns the output-document fields
+# Mapping fields endpoint - returns the output-document fields
 # from the mapping Excel, per doc type.
 # ---------------------------------------------------------
 
@@ -664,7 +664,7 @@ async def analyze_documents(
     x_session_id: str | None = Header(None),
     current_user: Optional[dict] = Depends(get_current_user),
 ):
-    """Run the reader pipeline (Reader â†’ Extractor â†’ Validator â†’ QualityChecker)."""
+    """Run the reader pipeline (Reader -> Extractor -> Validator -> QualityChecker)."""
     temp_dir = _session_temp_dir(x_session_id)
     os.makedirs(temp_dir, exist_ok=True)
 
@@ -685,7 +685,7 @@ async def analyze_documents(
             "doc_key": info["key"],
         })
 
-    # Inputs may have been uploaded on a different replica â€” pull them from
+    # Inputs may have been uploaded on a different replica - pull them from
     # blob storage if they are missing locally.
     for cfg in file_configs:
         ensure_local_file(cfg["input_docx"])
@@ -795,7 +795,7 @@ async def analyze_documents_stream(
             "doc_key": info["key"],
         })
 
-    # Inputs may have been uploaded on a different replica â€” pull them from
+    # Inputs may have been uploaded on a different replica - pull them from
     # blob storage if they are missing locally.
     for cfg in file_configs:
         restored = ensure_local_file(cfg["input_docx"])
@@ -995,7 +995,7 @@ async def write_ehcp(
     x_session_id: str | None = Header(None),
     current_user: Optional[dict] = Depends(get_current_user),
 ):
-    """Run the writer pipeline (TemplateWriter â†’ WriterValidator)."""
+    """Run the writer pipeline (TemplateWriter -> WriterValidator)."""
     if not os.path.exists(TEMPLATE_DOCX):
         raise HTTPException(status_code=400, detail="Template DOCX not found")
     if not os.path.exists(MAPPING_WORKBOOK):
@@ -1012,7 +1012,7 @@ async def write_ehcp(
         temp_dir=temp_dir,
     )
 
-    # Resolve json paths â€” frontend sends filenames, resolve to temp/ paths.
+    # Resolve json paths - frontend sends filenames, resolve to temp/ paths.
     # The extraction step may have run on a different replica, so pull each
     # JSON from blob storage if it is missing on this one.
     json_paths = {}

@@ -24,7 +24,7 @@ ENTRA_AUTHORITY = f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}"
 ENTRA_SCOPES = [
     ENTRA_SCOPE or f"api://{ENTRA_BACKEND_CLIENT_ID}/user_impersonation",
 ]
-# Redirect URI â€” the app's own URL (set via env or auto-detected)
+# Redirect URI - the app's own URL (set via env or auto-detected)
 ENTRA_REDIRECT_URI = os.getenv("ENTRA_REDIRECT_URI", "").strip()
 AZURE_KEY_VAULT_URL = os.getenv("AZURE_KEY_VAULT_URL", "").strip()
 ENTRA_CLIENT_SECRET_SECRET_NAME = os.getenv("ENTRA_CLIENT_SECRET_SECRET_NAME", "").strip()
@@ -154,13 +154,13 @@ def login_ui():
             st.query_params.clear()
             return False
 
-    # Microsoft returned an error â€” mark redirect as failed, show button
+    # Microsoft returned an error - mark redirect as failed, show button
     if auth_error:
         st.session_state._auth_redirect_failed = True
         st.query_params.clear()
         st.rerun()
 
-    # Auto-redirect to Microsoft (no prompt param â€” uses existing session if available)
+    # Auto-redirect to Microsoft (no prompt param - uses existing session if available)
     # Only show button if auto-redirect already failed (prevents infinite loop)
     if not st.session_state.get("_auth_redirect_failed"):
         try:
@@ -173,14 +173,14 @@ def login_ui():
             scopes=ENTRA_SCOPES,
             redirect_uri=redirect_uri,
         )
-        # Use meta refresh to redirect â€” JS doesn't work in Streamlit's sandboxed context
+        # Use meta refresh to redirect - JS doesn't work in Streamlit's sandboxed context
         st.markdown(
             f'<meta http-equiv="refresh" content="0;url={auth_url}">',
             unsafe_allow_html=True,
         )
         st.stop()
 
-    # Show sign-in page (auto-redirect failed â€” fallback)
+    # Show sign-in page (auto-redirect failed - fallback)
     st.title("\U0001f510 Sign In")
     st.markdown("You must sign in with your Microsoft account to use this application.")
 

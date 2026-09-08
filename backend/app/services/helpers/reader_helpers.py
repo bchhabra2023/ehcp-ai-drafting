@@ -134,7 +134,7 @@ _PROVISION_FIELDS = {"Provision", "By_Whom", "Frequency", "Met_Need"}
 
 # Patterns to strip at the start of lines inside provision field values
 _BULLET_PREFIX_RE = re.compile(
-    r"^[\s]*(?:[â€¢Â·â€“â€”\-]\s*|\d+[\.\)]\s*|\d+\.\d+[\.\)]*\s*)",
+    r"^[\s]*(?:[-*]\s*|\d+[\.\)]\s*|\d+\.\d+[\.\)]*\s*)",
     re.MULTILINE,
 )
 
@@ -203,7 +203,7 @@ def _merge_paragraph_arrays(data: dict) -> dict:
             # If any element looks like a numbered bullet, leave it alone
             if any(_NUMBERED_PREFIX_RE.match(str(item)) for item in val if isinstance(item, str)):
                 continue
-            # All elements are plain paragraph text â€” join into one element
+            # All elements are plain paragraph text - join into one element
             merged = " ".join(str(item).strip() for item in val if isinstance(item, str) and item.strip())
             if merged:
                 section[field_key] = [merged]
@@ -278,7 +278,7 @@ def _enforce_provision_array_lengths(data: dict) -> dict:
             continue  # already aligned
 
         # Use the most common length (mode) among the non-Provision arrays as
-        # the target â€” By_Whom, Frequency, Met_Need are less likely to have
+        # the target - By_Whom, Frequency, Met_Need are less likely to have
         # extra entries since their values are short/structured.
         non_provision_lens = [lengths[f] for f in ("By_Whom", "Frequency", "Met_Need") if f in lengths]
         if non_provision_lens:
@@ -292,10 +292,10 @@ def _enforce_provision_array_lengths(data: dict) -> dict:
             if not isinstance(val, list):
                 continue
             if len(val) > target_len:
-                print(f"  [PostProcess] {section_key}.{field}: truncating {len(val)} â†’ {target_len} entries")
+                print(f"  [PostProcess] {section_key}.{field}: truncating {len(val)} -> {target_len} entries")
                 section[field] = val[:target_len]
             elif len(val) < target_len:
-                print(f"  [PostProcess] {section_key}.{field}: padding {len(val)} â†’ {target_len} entries")
+                print(f"  [PostProcess] {section_key}.{field}: padding {len(val)} -> {target_len} entries")
                 section[field] = val + [None] * (target_len - len(val))
 
     return data
@@ -918,7 +918,7 @@ async def run_llm_extraction(full_prompt: str) -> tuple[str, dict]:
                         "Do NOT truncate, summarise, or skip any lines, paragraphs, or bullet points. "
                         "Every line of text that belongs to a schema field MUST appear in the output. "
                         "If a section has an introductory sentence followed by multiple lines or paragraphs, "
-                        "include ALL of them â€” not just the first line."
+                        "include ALL of them - not just the first line."
                     ),
                 },
                 {"role": "user", "content": full_prompt},
@@ -1022,7 +1022,7 @@ async def extract_document(document_text: str, prompt_file: str, schema_file: st
                 f"\n\nIMPORTANT: Extract ONLY these sections: {section_names}. "
                 "Ignore all other sections.\n"
                 "COMPLETENESS RULES:\n"
-                "- Include ALL text from EVERY field â€” do NOT truncate or shorten any content.\n"
+                "- Include ALL text from EVERY field - do NOT truncate or shorten any content.\n"
                 "- If a section has an introductory line followed by multiple lines, paragraphs or items, "
                 "extract ALL of them as separate array elements.\n"
                 "- Do NOT return only the first line of a multi-line section.\n"
@@ -1031,7 +1031,7 @@ async def extract_document(document_text: str, prompt_file: str, schema_file: st
                 "- Count the items you extract and verify nothing was skipped.\n"
                 "- For H1/H2 provision tables: use the STRUCTURED TABLE DATA at the end to count exact rows. "
                 "All four arrays (Provision, By_Whom, Frequency, Met_Need) MUST have the SAME length. "
-                "If a Met_Need cell has multiple lines, join them with \\n into ONE string â€” do NOT "
+                "If a Met_Need cell has multiple lines, join them with \\n into ONE string - do NOT "
                 "split them into separate Provision entries."
             )
             print(f"  Pass {i+1}/{len(schema_chunks)} ({section_names})...")
@@ -1048,7 +1048,7 @@ async def extract_document(document_text: str, prompt_file: str, schema_file: st
         )
         full_prompt += (
             "\n\nCOMPLETENESS RULES:\n"
-            "- Include ALL text from EVERY field â€” do NOT truncate or shorten any content.\n"
+            "- Include ALL text from EVERY field - do NOT truncate or shorten any content.\n"
             "- If a section has an introductory line followed by multiple lines, paragraphs or items, "
             "extract ALL of them as separate array elements.\n"
             "- Do NOT return only the first line of a multi-line section.\n"

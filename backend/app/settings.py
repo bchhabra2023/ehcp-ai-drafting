@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# â”€â”€ Managed Identity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# --- Managed Identity -------------------------------------------------------
 # The deployed runtime is managed-identity-only. AZURE_CLIENT_ID remains
 # available to support explicit user-assigned identity selection when needed.
 USE_MANAGED_IDENTITY = True
@@ -43,7 +43,7 @@ BACKEND_HOST = os.getenv("BACKEND_HOST", "0.0.0.0")
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 BACKEND_WORKERS = int(os.getenv("BACKEND_WORKERS", "4"))
 
-# â”€â”€ Microsoft Entra ID (Azure AD) Authentication â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# --- Microsoft Entra ID (Azure AD) Authentication ---------------------------
 AUTH_ENABLED = os.getenv(
     "AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
 ENTRA_TENANT_ID = os.getenv("ENTRA_TENANT_ID", "")
@@ -51,7 +51,7 @@ ENTRA_TENANT_ID = os.getenv("ENTRA_TENANT_ID", "")
 ENTRA_CLIENT_ID = os.getenv("ENTRA_CLIENT_ID", "")
 ENTRA_AUTHORITY = f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}"
 
-# â”€â”€ Azure Cosmos DB (Audit Logging) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# --- Azure Cosmos DB (Audit Logging) ----------------------------------------
 AUDIT_LOG_ENABLED = os.getenv(
     "AUDIT_LOG_ENABLED", "false").lower() in ("true", "1", "yes")
 COSMOS_DB_ENDPOINT = os.getenv("COSMOS_DB_ENDPOINT", "")
@@ -60,7 +60,7 @@ COSMOS_DB_CONTAINER = os.getenv("COSMOS_DB_CONTAINER", "activity-logs")
 COSMOS_DB_JOB_CONTAINER = os.getenv("COSMOS_DB_JOB_CONTAINER", "job-logs")
 
 
-# â”€â”€ Credential Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# --- Credential Helpers -----------------------------------------------------
 
 @lru_cache(maxsize=1)
 def get_azure_credential():

@@ -2,7 +2,7 @@
 Job-level Audit Logger for EHCP Document Processor.
 
 Logs a single comprehensive record per processing run to Cosmos DB,
-capturing the full lifecycle: upload â†’ analyse â†’ create EHCP.
+capturing the full lifecycle: upload -> analyse -> create EHCP.
 """
 import os
 import uuid
@@ -204,7 +204,7 @@ async def save_job_record(job: dict):
         if container is None:
             print(f"  [JobLog] No Cosmos container configured, skipping job log")
             return
-        # Strip raw token counts before persisting â€” only keep display values
+        # Strip raw token counts before persisting - only keep display values
         save_copy = dict(job)
         if "token_usage" in save_copy:
             save_copy["token_usage"] = {
@@ -234,7 +234,7 @@ async def load_job_record(job_id: str, session_id: str = None) -> Optional[dict]
             item = await container.read_item(
                 item=job_id, partition_key=partition_key)
         except Exception:
-            # Not found (or not yet created) â€” caller will create it.
+            # Not found (or not yet created) - caller will create it.
             return None
         # Restore raw token counters (stripped before save) so accumulation works
         if "token_usage" in item:
