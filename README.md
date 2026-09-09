@@ -24,6 +24,7 @@ that a human reviews and finalises - the system is a drafting assistant, **not**
 - [How the pipelines work](#how-the-pipelines-work)
 - [Configuration reference](#configuration-reference)
 - [Running locally](#running-locally)
+- [Deploying to Azure](#deploying-to-azure)
 - [API reference](#api-reference)
 - [Customising the solution](#customising-the-solution)
 - [Test cases](#test-cases)
@@ -272,7 +273,8 @@ Browser --HTTPS--> Frontend Container App --internal HTTPS--> Backend Container 
 |  `- .streamlit/config.toml
 |- Test Cases/                      # Sample inputs, blank templates, expected outputs
 |- build-push.ps1                   # Build + push both images to ACR
-`- deploy-aca.ps1                   # Create/update both Azure Container Apps
+|- deploy-aca.ps1                   # Create/update both Azure Container Apps
+`- deploy-infrastructure 1.ps1      # Provision Azure resources and deploy the application
 ```
 
 ---
@@ -423,6 +425,88 @@ python -m unittest tests.e2e.test_ehcp_draft_flow
 ```
 
 ---
+
+## Deploying to Azure
+
+`deploy-infrastructure 1.ps1` provisions the resource group, networking, Container Registry,
+Microsoft Foundry resource and project, model deployment, Document Intelligence, Storage,
+Cosmos DB, Key Vault, Log Analytics and Container Apps environment. It then builds both images
+with ACR Tasks, deploys the frontend and backend Container Apps, and assigns their managed-identity
+roles.
+
+> The file name contains a space, so quote or escape it when running the script. Run it from the
+> repository root. As noted above, the current deployment is intended for sandbox/test use.
+
+### Prerequisites
+
+- PowerShell 7 (`pwsh`) and Azure CLI (`az`).
+- An Azure subscription with the required resource providers and sufficient quota for the selected
+  Foundry model and region.
+- Permission to create the resources listed above and create Azure RBAC role assignments (for
+  example, Owner or an equivalent combination of resource and role-assignment permissions).
+- Docker is not required locally; image builds run remotely using ACR Tasks.
+
+Sign in before running the deployment:
+
+```powershell
+az login
+az account show
+```
+
+### Script parameters
+
+Pass parameter values to the script rather than editing its generated resource-name variables.
+
+| Parameter | Required | Default | What to set |
+|---|---|---|---|
+| `SubscriptionId` | Yes | - | Subscription ID in which to deploy. |
+| `ResourceGroup` | Yes | - | Name of the resource group to create or reuse. |
+| `Location` | No | `swedencentral` | Azure region for the resources. Confirm service/model availability and data-residency requirements before changing it. |
+| `Prefix` | No | `ehcp-org` | Naming prefix for generated resources. Use lowercase letters, numbers and hyphens; globally scoped names may be adjusted if unavailable. |
+| `FoundryModelName` | No | `gpt-5.2` | Foundry model to deploy. |
+| `FoundryModelVersion` | No | `2025-12-11` | Version available for the selected model and region. |
+| `FoundryModelFormat` | No | `OpenAI` | Model provider/format used by the deployment. |
+| `FoundryModelSkuName` | No | `GlobalStandard` | Deployment SKU; choose one permitted by your data-processing requirements. |
+| `FoundryModelCapacity` | No | `20` | Deployment capacity supported by your quota. |
+| `SkipInfra` | No | Off | Reuse previously provisioned infrastructure and only rebuild/redeploy the apps and refresh RBAC. |
+
+### Run the deployment
+
+Set the two required parameters and review the optional model, region and naming values:
+
+```powershell
+pwsh -File "./deploy-infrastructure 1.ps1" `
+  -SubscriptionId "<subscription-id>" `
+  -ResourceGroup "<resource-group>" `
+  -Location "swedencentral" `
+  -Prefix "ehcp-org" `
+  -FoundryModelName "gpt-5.2" `
+  -FoundryModelVersion "2025-12-11" `
+  -FoundryModelFormat "OpenAI" `
+  -FoundryModelSkuName "GlobalStandard" `
+  -FoundryModelCapacity 20
+```
+
+For later application-only deployments against the resources created by the full run:
+
+```powershell
+pwsh -File "./deploy-infrastructure 1.ps1" `
+  -SubscriptionId "<subscription-id>" `
+  -ResourceGroup "<resource-group>" `
+  -Prefix "ehcp-org" `
+  -SkipInfra
+```
+
+Use the same `Location`, `Prefix` and model parameters as the initial deployment. `SkipInfra`
+expects the generated resources to exist in the specified resource group.
+
+When complete, the script prints the public frontend URL and the resource endpoints. Authentication
+is disabled initially. Follow the printed next steps to create the frontend and backend Entra app
+registrations, store the frontend client secret in Key Vault, set the `ENTRA_*` Container App
+variables, and then set `AUTH_ENABLED=true` on both apps.
+
+---
+
 ## API reference
 
 All routes are prefixed with `/api`. Requests should include an `X-Session-ID` header (and an
