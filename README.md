@@ -46,6 +46,7 @@ that a human reviews and finalises - the system is a drafting assistant, **not**
 | Auditability | Per-action and per-job records written to Azure Cosmos DB; token usage tracked per run |
 | Enterprise auth | Optional Microsoft Entra ID sign-in (MSAL auth-code flow in the UI, JWT validation in the API) |
 | Keyless operation | Managed-identity-first access to Foundry, Document Intelligence, Blob Storage and Cosmos DB; Key Vault only for secrets that cannot be eliminated |
+| Private networking | Storage, Cosmos DB and Key Vault are reachable only through private endpoints on a dedicated VNet; the Container Apps environment is VNet-injected and there is no public data-plane traffic to these services |
 
 ---
 
@@ -60,12 +61,19 @@ Microsoft Entra ID
 Browser --HTTPS--> Frontend Container App --internal HTTPS--> Backend Container App
                     Streamlit (8501)                           FastAPI + Uvicorn (8000)
                     external ingress                           internal ingress
+                    (VNet-injected Container Apps environment, system-assigned managed identities)
                                                                   |
-                                                                  +--> Microsoft Foundry
-                                                                  +--> Azure AI Document Intelligence
-                                                                  +--> Azure Blob Storage
-                                                                  +--> Azure Cosmos DB
-                                                                  +--> Azure Container Registry
+                                                                  +--> Microsoft Foundry (managed identity)
+                                                                  +--> Azure AI Document Intelligence (managed identity)
+                                                                  +--> Azure Blob Storage (private endpoint, managed identity)
+                                                                  +--> Azure Cosmos DB (private endpoint, managed identity)
+                                                                  +--> Azure Key Vault (private endpoint, managed identity; residual secrets only)
+                                                                  +--> Azure Container Registry (AcrPull via managed identity)
+
+VNet
+  |- snet-container-apps          # Container Apps environment infrastructure subnet
+  `- snet-private-endpoints       # Private endpoints for Storage, Cosmos DB and Key Vault
+                                    (linked to matching Private DNS zones)
 ```
 
 ### Application layers
@@ -121,13 +129,14 @@ Browser --HTTPS--> Frontend Container App --internal HTTPS--> Backend Container 
 | **Microsoft Foundry resource + project** | Hosts the model deployment used for structured extraction and LLM validation. The backend calls the Foundry-hosted deployment through MAF's `OpenAIChatCompletionClient` and the `openai.AzureOpenAI` SDK using managed identity. | `FOUNDRY_*` in `backend/app/settings.py` |
 | **Microsoft Agent Framework (MAF)** | The `agent-framework` Python package that defines agents, tools and the chat client abstraction used by every pipeline stage. | `backend/app/services/agents.py`, `backend/requirements.txt` |
 | **Azure AI Document Intelligence** | `prebuilt-layout` model for OCR and layout-aware text/table extraction from scanned or complex PDFs and DOCX files. | `AZURE_DOCUMENT_INTELLIGENCE_*` |
-| **Azure Blob Storage** | Optional durable store for uploaded source files and generated outputs so container replicas remain stateless and restart-safe. | `AZURE_STORAGE_*` |
-| **Azure Cosmos DB (NoSQL)** | Audit trail. `activity-logs` container records individual user actions; `job-logs` records one document per case covering upload -> analyse -> create EHCP, including token usage and completeness. | `COSMOS_DB_*`, `AUDIT_LOG_ENABLED` |
+| **Azure Blob Storage** | Optional durable store for uploaded source files and generated outputs so container replicas remain stateless and restart-safe. Reachable only via a private endpoint on the deployment VNet; public network access is disabled. | `AZURE_STORAGE_*` |
+| **Azure Cosmos DB (NoSQL)** | Audit trail. `activity-logs` container records individual user actions; `job-logs` records one document per case covering upload -> analyse -> create EHCP, including token usage and completeness. Reachable only via a private endpoint on the deployment VNet; public network access is disabled. | `COSMOS_DB_*`, `AUDIT_LOG_ENABLED` |
 | **Microsoft Entra ID** | Sign-in for the Streamlit app (MSAL confidential client) and JWT bearer validation for the FastAPI backend, using separate frontend and backend app registrations. | `ENTRA_*`, `AUTH_ENABLED` |
 | **Azure Container Registry (ACR)** | Stores the `ehcp-backend` and `ehcp-frontend` container images. | `build-push.ps1` |
-| **Azure Key Vault** | Stores secrets that cannot be eliminated from the design, notably the frontend MSAL confidential-client secret. The frontend reads them at runtime using its managed identity. | `frontend/auth.py`, `deploy-infrastructure 1.ps1` |
-| **Azure Container Apps (ACA)** | Hosts both containers in one managed environment: frontend with external ingress, backend with internal-only ingress; both apps use system-assigned managed identities and ACR pull via managed identity. | `deploy-aca.ps1` |
-| **Managed Identity** | Default authentication path for Foundry, Document Intelligence, Blob Storage, Cosmos DB, ACR pulls, and Key Vault access. `AZURE_CLIENT_ID` remains optional for explicit user-assigned identity selection when needed. | `backend/app/settings.py`, `frontend/auth.py` |
+| **Azure Key Vault** | Stores the one secret that cannot be eliminated from the design, the frontend MSAL confidential-client secret. The frontend reads it at runtime using its managed identity. Reachable only via a private endpoint on the deployment VNet; public network access is disabled. | `frontend/auth.py`, `deploy-infrastructure 1.ps1` |
+| **Virtual Network (VNet) + Private Endpoints** | Isolates data-plane traffic to Storage, Cosmos DB and Key Vault behind private endpoints on a dedicated subnet, each resolved through a matching Private DNS zone; a second subnet hosts the VNet-injected Container Apps environment. No secrets or connection strings are used to reach these services. | `deploy-infrastructure 1.ps1` |
+| **Azure Container Apps (ACA)** | Hosts both containers in one VNet-injected managed environment: frontend with external ingress, backend with internal-only ingress; both apps use system-assigned managed identities and ACR pull via managed identity. | `deploy-aca.ps1` |
+| **Managed Identity** | Default authentication path for Foundry, Document Intelligence, Blob Storage, Cosmos DB, ACR pulls, and Key Vault access, replacing connection strings and API keys. `AZURE_CLIENT_ID` remains optional for explicit user-assigned identity selection when needed. | `backend/app/settings.py`, `frontend/auth.py` |
 
 ---
 
@@ -377,13 +386,16 @@ or model changes. No real personal data is included.
   network access, and set retention/lifecycle policies on the blob container and Cosmos DB
   containers.
 - **Secrets.** No secrets are committed. Managed identity is the default runtime authentication
-  path. If a secret cannot be eliminated, store it in Azure Key Vault and retrieve it via managed
-  identity instead of keeping the value in application environment variables.
+  path for Foundry, Document Intelligence, Blob Storage, Cosmos DB and ACR pulls. The one secret
+  that cannot be eliminated (the frontend's Entra client secret) is stored in Azure Key Vault and
+  retrieved via managed identity instead of being kept in application environment variables.
 - **Authentication.** Enable `AUTH_ENABLED=true` in any non-local environment so the API validates
   Entra ID JWTs (signature, audience, issuer and expiry).
 - **Network isolation.** The backend is deployed with internal-only ingress; only the frontend is
-  publicly reachable. Consider tightening the backend CORS policy in `backend/main.py` from `*` to
-  the frontend origin.
+  publicly reachable. The Container Apps environment is injected into a dedicated VNet, and Blob
+  Storage, Cosmos DB and Key Vault are reachable only through private endpoints on that VNet (public
+  network access is disabled on all three), each resolved via a matching Private DNS zone. Consider
+  tightening the backend CORS policy in `backend/main.py` from `*` to the frontend origin.
 - **Session isolation.** Uploads and outputs are written to per-session directories, and result
   downloads are restricted to the owning session.
 - **Auditability.** With `AUDIT_LOG_ENABLED=true`, every user action and a consolidated per-case
